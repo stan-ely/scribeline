@@ -1,0 +1,50 @@
+/* The page's own styles. Copied into site/dist/ under a content-hashed name by
+   scripts/build-site.mjs -- see the note there about why the name is hashed.
+
+   Tokens live here for now because there is only one consumer. When the UI
+   grows a component with a shadow root, they move to src/web/tokens.js and this
+   file consumes them instead of defining them: two token lists that must agree
+   but are not the same list is the same footgun the CSP generator avoids. */
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #12110f;
+  --fg: #eae6df;
+  --muted: #9c968c;
+  --accent: #d8a657;
+  --line: #2b2825;
+
+  --sp-1: 0.5rem;
+  --sp-2: 1rem;
+  --sp-3: 1.5rem;
+  --sp-4: 2.5rem;
+
+  --font: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+#app {
+  padding: var(--sp-4) var(--sp-3);
+}
+
+noscript p {
+  max-width: 40rem;
+  margin: var(--sp-4) auto;
+  padding: 0 var(--sp-3);
+  color: var(--muted);
+}

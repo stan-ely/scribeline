@@ -1,0 +1,23 @@
+# Read by Cloudflare Pages and Netlify. NOT read by GitHub Pages, which serves
+# no custom headers at all -- see .github/workflows/pages.yml.
+#
+# The first two are the reason this file is load-bearing rather than
+# defence-in-depth. Cross-origin isolation is what makes SharedArrayBuffer
+# available, and SharedArrayBuffer is what makes whisper.cpp run threaded. On a
+# host that drops these headers the app still works and is several times slower;
+# site/main.js reads `crossOriginIsolated` and is expected to pick a
+# single-threaded build rather than fail.
+#
+# require-corp is the strict half: every cross-origin subresource must opt in.
+# That is why the wasm binary is served from this origin (src/core/engine.js) --
+# and why model downloads from Hugging Face need its CORS headers to keep
+# working, which is a dependency on someone else's configuration and worth
+# knowing about before it breaks.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  Content-Security-Policy: frame-ancestors 'none'
+  X-Frame-Options: DENY
+  Referrer-Policy: no-referrer
+  Permissions-Policy: camera=(), geolocation=(), payment=(), usb=()
+  X-Content-Type-Options: nosniff

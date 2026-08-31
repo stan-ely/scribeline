@@ -15,6 +15,6 @@
     // scope for code that runs in a browser and has none of them.
     "types": []
   },
-  "include": ["src/core/**/*.js", "src/web/**/*.js", "types/**/*.d.ts"],
+  "include": ["src/core/**/*.js", "src/web/**/*.js", "site/*.js", "types/**/*.d.ts"],
   "exclude": ["node_modules", "site/dist", "dist"]
 }
