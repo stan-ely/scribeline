@@ -42,6 +42,73 @@ if (window.top !== window.self) {
  */
 export const THREADS_AVAILABLE = globalThis.crossOriginIsolated === true
 
-console.info(
-  `scribeline: scaffold. threads ${THREADS_AVAILABLE ? 'available' : 'unavailable'}.`,
+/**
+ * The placeholder screen.
+ *
+ * Rendered from JavaScript rather than written into index.html, for one reason
+ * beyond consistency with how the app will work: a static page proves the HTML
+ * was served, and this proves the bundle was fetched, parsed, and executed
+ * under the shipped Content-Security-Policy. On a deployed scaffold that is the
+ * more useful of the two signals -- an empty page cannot tell you which half
+ * failed.
+ *
+ * The threading line is here for the same reason. Whether the page is
+ * cross-origin isolated is decided by response headers this repository cannot
+ * set on its deploy host, and it is otherwise only visible by reading headers
+ * by hand. Putting it on the page makes the one real constraint on this
+ * project checkable by looking at it.
+ *
+ * All of this is replaced by the editor. Nothing here is a component to build
+ * on -- no state, no vdom, no structure worth keeping.
+ */
+const app = document.getElementById('app')
+if (!app) throw new Error('#app is missing from the page')
+
+/**
+ * @param {string} tag
+ * @param {string | null} [className]
+ * @param {string} [text]
+ * @returns {HTMLElement}
+ */
+const el = (tag, className, text) => {
+  const node = document.createElement(tag)
+  if (className) node.className = className
+  // textContent, never innerHTML. Nothing on this page is user-supplied yet,
+  // and the habit is cheaper to keep than to retrofit once something is.
+  if (text) node.textContent = text
+  return node
+}
+
+const shell = el('div', 'placeholder')
+shell.append(
+  el('h1', null, 'scribeline'),
+  el('p', 'lede', 'A transcript editor that runs on your machine.'),
+  el(
+    'p',
+    null,
+    'Waveform and words on one timeline. whisper.cpp runs as WebAssembly in ' +
+      'the page, so your audio never leaves the device.',
+  ),
+  el('p', 'status', 'Scaffold — the editor is not built yet.'),
+  el(
+    'p',
+    'env',
+    THREADS_AVAILABLE
+      ? 'This page is cross-origin isolated: threaded inference is available.'
+      : 'This page is not cross-origin isolated, so SharedArrayBuffer is ' +
+        'unavailable and transcription would run single-threaded. That is the ' +
+        'deploy host, not the build.',
+  ),
 )
+
+// createElement directly rather than through el(): that helper is typed as
+// returning HTMLElement, which has no `href`. Narrowing it generically would
+// mean a lookup type for one anchor on a page that is about to be deleted.
+const source = el('p', 'env')
+const link = document.createElement('a')
+link.href = 'https://github.com/stan-ely/scribeline'
+link.textContent = 'github.com/stan-ely/scribeline'
+source.append(link)
+shell.append(source)
+
+app.append(shell)

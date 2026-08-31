@@ -48,3 +48,46 @@ noscript p {
   padding: 0 var(--sp-3);
   color: var(--muted);
 }
+
+/* The placeholder screen, rendered by site/main.js. Goes away with the editor;
+   there is nothing here worth carrying forward. */
+
+.placeholder {
+  max-width: 34rem;
+  margin: 0 auto;
+}
+
+.placeholder h1 {
+  margin: 0 0 var(--sp-1);
+  font-size: 2rem;
+  letter-spacing: -0.02em;
+  color: var(--accent);
+}
+
+.placeholder p {
+  margin: 0 0 var(--sp-2);
+  color: var(--muted);
+}
+
+.placeholder .lede {
+  font-size: 1.15rem;
+  color: var(--fg);
+}
+
+.placeholder .status {
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--line);
+  color: var(--fg);
+}
+
+/* The threading readout and the source link. Deliberately quiet -- they are
+   here to be checked, not read. */
+.placeholder .env {
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+
+.placeholder a {
+  color: var(--accent);
+}
