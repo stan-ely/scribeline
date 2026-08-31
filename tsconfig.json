@@ -1,0 +1,20 @@
+{
+  // The browser project: everything that ships to a page.
+  //
+  // src/core/ appears here AND in tsconfig.node.json. That duplication is the
+  // point -- core is the isomorphic half, and checking it under both sets of
+  // globals is what enforces the claim. A `Buffer.from` in core passes the Node
+  // project and fails here.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+
+    // Empty on purpose. Without it, every @types package under node_modules is
+    // included automatically -- including @types/node, which is installed for
+    // the Node project. That would put Buffer, process, and the Node globals in
+    // scope for code that runs in a browser and has none of them.
+    "types": []
+  },
+  "include": ["src/core/**/*.js", "src/web/**/*.js", "types/**/*.d.ts"],
+  "exclude": ["node_modules", "site/dist", "dist"]
+}

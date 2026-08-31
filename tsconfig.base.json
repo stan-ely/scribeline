@@ -1,0 +1,42 @@
+{
+  // Settings shared by the two projects. Not a project itself -- it has no
+  // `include`, so running tsc against it directly checks nothing.
+  //
+  // There are two projects because there are two runtimes. src/core/ holds the
+  // parts that are just data and arithmetic -- timestamp maths, segment
+  // splitting, SRT and VTT serialization -- and must run in a browser and in
+  // Node alike, so it is checked twice under two different sets of globals.
+  // src/web/ needs the DOM; scripts/ and the tests need Node.
+  //
+  // A single combined project would make Node globals visible to browser code,
+  // and a stray `Buffer.from` in a file served to users would typecheck
+  // cleanly right up until it threw.
+  "compilerOptions": {
+    "noEmit": true,
+
+    // The source is JavaScript, checked through JSDoc. There is no build step
+    // between what is written and what runs -- the file in src/ is the file the
+    // browser gets, modulo bundling. tsc is a linter here, not a compiler.
+    "allowJs": true,
+    "checkJs": true,
+
+    // The floor is "what the browsers we target actually have". Top-level
+    // await, `structuredClone`, and the Cache API are all assumed; WebAssembly
+    // threads and `SharedArrayBuffer` will be, once whisper lands.
+    "target": "ES2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+
+    // Our own code is checked strictly; the dependency graph under
+    // node_modules is not ours to fix.
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true
+  }
+}

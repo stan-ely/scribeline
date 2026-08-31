@@ -1,0 +1,32 @@
+{
+  // The Node project: the build script, the tests, and src/node/ when it
+  // exists.
+  //
+  // src/node/ is named here although the directory has not been created. There
+  // is no CLI yet -- a batch transcriber over a folder of recordings is the
+  // obvious one, and it is not what this project is about. Naming it now costs
+  // nothing and means the day it appears is a day of writing code rather than a
+  // day of arguing with tsconfig.
+  //
+  // src/core/ is included as well, because src/node/ and the tests import it
+  // and the checker must follow those imports. It gets checked twice as a
+  // result, once here with Node's globals in scope and once in tsconfig.json
+  // without them. The browser project is the one that decides whether an
+  // isomorphic file is allowed to touch something.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    // DOM as well as Node: the tests exercise browser code, and the layout
+    // sweep will pass functions to Playwright's page.evaluate, which run in a
+    // page.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node"]
+  },
+  "include": [
+    "src/core/**/*.js",
+    "src/node/**/*.js",
+    "scripts/**/*.mjs",
+    "test/**/*.mjs",
+    "types/**/*.d.ts"
+  ],
+  "exclude": ["node_modules", "site/dist", "dist"]
+}
