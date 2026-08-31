@@ -1,0 +1,35 @@
+# Node is the whole toolchain. There is no bundler daemon, no test framework, no
+# CSS pipeline: esbuild is invoked once by scripts/build-site.mjs, the tests are
+# `node --test`, and the types are checked by tsc against plain JavaScript. That
+# is not minimalism for its own sake -- it is what keeps `mise install` followed
+# by `npm ci` a complete setup, on a machine that has never seen this project.
+#
+# Node 24 rather than 22 (the package's declared floor): 22 is the oldest
+# release the source is written against, 24 is what it is developed against.
+# Anything that needs the newer one should raise `engines` in package.json
+# rather than quietly rely on this line.
+[tools]
+node = "24"
+
+[tasks.test]
+description = "Run unit tests"
+run = "node --test"
+
+[tasks.typecheck]
+description = "Type-check the browser and Node projects"
+run = "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit"
+
+[tasks.build]
+description = "Build the static site into site/dist/"
+run = "node scripts/build-site.mjs"
+
+# Build site/dist/ and serve it flat on :4173, the way a host would. localhost
+# counts as a secure context, so WebCrypto, the microphone, and the file picker
+# all behave there as they would over real HTTPS.
+#
+# Cross-origin isolation is the one thing this does NOT reproduce for free --
+# see the header comment in scripts/build-site.mjs.
+[tasks.start]
+description = "Build and serve site/dist/ on :4173"
+alias = "serve"
+run = "node scripts/build-site.mjs --serve"

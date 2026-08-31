@@ -1,0 +1,33 @@
+{
+  "name": "scribeline",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "A transcript editor in the browser. Waveform and words on one timeline, whisper.cpp running as WebAssembly on the page, audio that never leaves the device.",
+  "license": "MIT",
+  "author": "Bevan Stanely",
+  "keywords": [
+    "transcript",
+    "subtitles",
+    "whisper",
+    "webassembly",
+    "waveform",
+    "srt",
+    "vtt"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "build": "node scripts/build-site.mjs",
+    "start": "node scripts/build-site.mjs --serve"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "esbuild": "^0.25.0",
+    "playwright": "^1.61.1",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "private": true
+}
