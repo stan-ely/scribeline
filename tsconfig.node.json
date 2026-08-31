@@ -15,9 +15,9 @@
   // isomorphic file is allowed to touch something.
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    // DOM as well as Node: the tests exercise browser code, and the layout
-    // sweep will pass functions to Playwright's page.evaluate, which run in a
-    // page.
+    // DOM as well as Node: the tests exercise code that also runs in a page,
+    // and a browser-driven check would pass functions to something like
+    // page.evaluate, which are typed against the DOM rather than against Node.
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "types": ["node"]
   },

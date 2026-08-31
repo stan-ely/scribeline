@@ -12,8 +12,11 @@ compiled to WebAssembly and run inside the page. There is no server, no upload,
 and no account. Your audio does not leave the device, which is not a policy —
 there is nowhere for it to go.
 
-> **Status: scaffold.** The toolchain, the build, and the content security
-> policy are in place and the checks pass. The editor itself is not written yet.
+> **Status: early.** The toolchain, the build, and the content security policy
+> are in place, and `src/core/` now holds the transcript document itself — the
+> word and segment model, the editing operations, and SRT/VTT export, under
+> test. Nothing is wired to a page yet: there is no waveform, no editor, and no
+> whisper. Opening the site gets you a placeholder.
 
 ---
 
