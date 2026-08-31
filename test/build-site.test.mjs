@@ -97,7 +97,7 @@ test('the built page carries no absolute URL to a host it may not dial', async (
   // ENGINE_ORIGINS or same-origin; anything else is either a mistake or a
   // request that the policy will block.
   const html = await readFile(path.join(DIST, 'index.html'), 'utf8')
-  const allowed = [...ENGINE_ORIGINS, 'https://stan-ely.github.io']
+  const allowed = [...ENGINE_ORIGINS, 'https://stan-ely.com']
 
   // `;` is excluded from the character class because most of the URLs in the
   // page are inside the CSP meta tag, where a semicolon ends the directive and

@@ -47,11 +47,18 @@ const DIST = path.join(SITE, 'dist')
  * the drift is silent, because a wrong og:url is invisible until someone else
  * pastes the link somewhere.
  *
- * No custom domain is bound yet. When one is, this constant changes and a CNAME
- * file joins the build -- both in this file, which is the point of it being a
- * constant.
+ * NOTE THE HOST: this is stan-ely.com, not stan-ely.github.io. The account's
+ * user Pages site carries a custom domain, and project Pages sites inherit it,
+ * so this repository is served from a path under that domain without anything
+ * in this repository asking for it. No CNAME file is written here -- the
+ * binding belongs to the user site, and one written from this build would be
+ * a second claim on the same domain.
+ *
+ * It is a path, not a bare origin, and that is deliberate rather than sloppy:
+ * a project Pages site lives under /scribeline/, so og:url must carry it or
+ * the link resolves to the user site's homepage.
  */
-const ORIGIN = 'https://stan-ely.github.io/scribeline'
+const ORIGIN = 'https://stan-ely.com/scribeline'
 
 /**
  * The Content-Security-Policy, as a single generated string.
