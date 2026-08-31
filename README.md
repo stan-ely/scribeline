@@ -12,11 +12,13 @@ compiled to WebAssembly and run inside the page. There is no server, no upload,
 and no account. Your audio does not leave the device, which is not a policy —
 there is nowhere for it to go.
 
-> **Status: early.** The toolchain, the build, and the content security policy
-> are in place, and `src/core/` now holds the transcript document itself — the
-> word and segment model, the editing operations, and SRT/VTT export, under
-> test. Nothing is wired to a page yet: there is no waveform, no editor, and no
-> whisper. Opening the site gets you a placeholder.
+> **Status: early.** Half of the first sentence above is true. Opening the site
+> gets you a file chooser, a waveform, and a player — pick a recording and it is
+> decoded in the page, drawn, and playable, and clicking the waveform seeks
+> there. `src/core/` holds the transcript document too: the word and segment
+> model, the editing operations, and SRT/VTT export, under test. What is missing
+> is the part in the middle. There is no whisper yet, so nothing produces a
+> transcript, and nothing draws one next to the audio.
 
 ---
 
@@ -60,8 +62,8 @@ work against `npm start` without a certificate.
 ## Layout
 
 ```
-src/core/    timestamp maths, segment boundaries, SRT/VTT. No DOM, no fs.
-src/web/     everything that needs a DOM.
+src/core/    timestamp maths, segment boundaries, peaks, SRT/VTT. No DOM, no fs.
+src/web/     everything that needs a DOM: decode, canvas, playhead.
 site/        the page: index.html, main.js, styles.css -> built to site/dist/
 scripts/     build-site.mjs
 test/        node --test

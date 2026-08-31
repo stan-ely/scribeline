@@ -2,11 +2,15 @@
  * The page entry point. Bundled to site/dist/main.<hash>.js by
  * scripts/build-site.mjs.
  *
- * Nothing is mounted yet -- this is the scaffold commit. What is here already
- * is the pair of environment checks the app cannot start without, because
- * finding out about either of them halfway through loading a 60 MB model is
- * worse than finding out immediately.
+ * This is the first screen that does something: open a recording, see it, play
+ * it, click it. There is no transcript yet -- what this slice builds is the
+ * timeline the words will be positioned against.
  */
+
+import { el, formatDuration } from '../src/web/dom.js'
+import { decodeAudioFile, revokeAudioFile } from '../src/web/audio-file.js'
+import { createWaveform } from '../src/web/waveform.js'
+import { createPlayer } from '../src/web/player.js'
 
 /**
  * Refuse to run inside a frame.
@@ -42,73 +46,105 @@ if (window.top !== window.self) {
  */
 export const THREADS_AVAILABLE = globalThis.crossOriginIsolated === true
 
-/**
- * The placeholder screen.
- *
- * Rendered from JavaScript rather than written into index.html, for one reason
- * beyond consistency with how the app will work: a static page proves the HTML
- * was served, and this proves the bundle was fetched, parsed, and executed
- * under the shipped Content-Security-Policy. On a deployed scaffold that is the
- * more useful of the two signals -- an empty page cannot tell you which half
- * failed.
- *
- * The threading line is here for the same reason. Whether the page is
- * cross-origin isolated is decided by response headers this repository cannot
- * set on its deploy host, and it is otherwise only visible by reading headers
- * by hand. Putting it on the page makes the one real constraint on this
- * project checkable by looking at it.
- *
- * All of this is replaced by the editor. Nothing here is a component to build
- * on -- no state, no vdom, no structure worth keeping.
- */
 const app = document.getElementById('app')
 if (!app) throw new Error('#app is missing from the page')
 
-/**
- * @param {string} tag
- * @param {string | null} [className]
- * @param {string} [text]
- * @returns {HTMLElement}
- */
-const el = (tag, className, text) => {
-  const node = document.createElement(tag)
-  if (className) node.className = className
-  // textContent, never innerHTML. Nothing on this page is user-supplied yet,
-  // and the habit is cheaper to keep than to retrofit once something is.
-  if (text) node.textContent = text
-  return node
-}
+const heading = el('h1', null, 'scribeline')
 
-const shell = el('div', 'placeholder')
-shell.append(
-  el('h1', null, 'scribeline'),
-  el('p', 'lede', 'A transcript editor that runs on your machine.'),
-  el(
-    'p',
-    null,
-    'Waveform and words on one timeline. whisper.cpp runs as WebAssembly in ' +
-      'the page, so your audio never leaves the device.',
-  ),
-  el('p', 'status', 'Scaffold — the editor is not built yet.'),
-  el(
-    'p',
-    'env',
-    THREADS_AVAILABLE
-      ? 'This page is cross-origin isolated: threaded inference is available.'
-      : 'This page is not cross-origin isolated, so SharedArrayBuffer is ' +
-        'unavailable and transcription would run single-threaded. That is the ' +
-        'deploy host, not the build.',
-  ),
+// A real <input type="file"> inside a <label>, rather than a button that calls
+// showOpenFilePicker(). The input is the only file-choosing control every
+// browser has, it is keyboard-reachable and announced correctly for free, and
+// the label is what makes it stylable -- the input's own button cannot be.
+const input = el('input', 'chooser-input')
+input.type = 'file'
+input.accept = 'audio/*'
+input.id = 'audio-file'
+
+const chooser = el('label', 'chooser')
+chooser.htmlFor = input.id
+chooser.append(el('span', null, 'Open a recording'), input)
+
+const status = el('p', 'status', 'No file open.')
+// Announced when it changes, because the two things it reports -- a decode
+// finishing and a decode failing -- both happen with no visible movement
+// anywhere else on the page.
+status.setAttribute('role', 'status')
+
+const canvas = el('canvas', 'waveform-canvas')
+const playhead = el('div', 'playhead')
+const surface = el('div', 'waveform')
+surface.append(canvas, playhead)
+
+const audio = el('audio', 'transport')
+audio.controls = true
+// The waveform is the scrub bar; the native control is here for play, pause,
+// volume, and speed. It has no source until a file is opened.
+audio.preload = 'metadata'
+
+const footer = el(
+  'p',
+  'footer',
+  THREADS_AVAILABLE
+    ? 'Cross-origin isolated: threaded inference will be available.'
+    : 'Not cross-origin isolated, so SharedArrayBuffer is unavailable and ' +
+      'transcription will run single-threaded. That is the deploy host, not ' +
+      'the build.',
 )
 
-// createElement directly rather than through el(): that helper is typed as
-// returning HTMLElement, which has no `href`. Narrowing it generically would
-// mean a lookup type for one anchor on a page that is about to be deleted.
-const source = el('p', 'env')
-const link = document.createElement('a')
-link.href = 'https://github.com/stan-ely/scribeline'
-link.textContent = 'github.com/stan-ely/scribeline'
-source.append(link)
-shell.append(source)
+app.append(heading, chooser, status, surface, audio, footer)
 
-app.append(shell)
+const waveform = createWaveform(canvas)
+const player = createPlayer({ audio, surface })
+
+/**
+ * The URL of the file currently loaded, so it can be released when the next one
+ * replaces it.
+ *
+ * @type {string | null}
+ */
+let currentUrl = null
+
+/** @param {File | undefined | null} file */
+async function open(file) {
+  if (!file) return
+
+  status.textContent = `Decoding ${file.name}…`
+  try {
+    const decoded = await decodeAudioFile(file)
+
+    // Revoked only once the new file has decoded successfully. Releasing the
+    // old URL first would leave a failed decode with nothing loaded and the
+    // previous recording gone, which is the worst outcome for someone who
+    // picked the wrong file out of a folder.
+    revokeAudioFile(currentUrl)
+    currentUrl = decoded.url
+
+    audio.src = decoded.url
+    player.setDuration(decoded.duration)
+    waveform.setBuffer(decoded.audioBuffer)
+
+    status.textContent = `${decoded.name} — ${formatDuration(decoded.duration)}`
+  } catch (error) {
+    status.textContent = error instanceof Error ? error.message : String(error)
+  }
+}
+
+input.addEventListener('change', () => {
+  void open(input.files?.[0])
+  // Cleared so that choosing the same file twice fires `change` again -- after
+  // a failed decode, re-picking the same file is exactly what someone tries.
+  input.value = ''
+})
+
+// Drop as well as pick. Both handlers are needed: without preventDefault on
+// dragover the browser navigates away to the file, replacing the page.
+surface.addEventListener('dragover', (event) => {
+  event.preventDefault()
+  surface.classList.add('is-dropping')
+})
+surface.addEventListener('dragleave', () => surface.classList.remove('is-dropping'))
+surface.addEventListener('drop', (event) => {
+  event.preventDefault()
+  surface.classList.remove('is-dropping')
+  void open(event.dataTransfer?.files[0])
+})

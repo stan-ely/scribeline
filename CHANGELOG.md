@@ -33,5 +33,30 @@ for a browser-driven check that does not exist yet, and until that check is
 written it was a large install on every CI run buying nothing. It comes back
 with the commit that uses it.
 
-Still no editor, no waveform, and no whisper: the page continues to render the
-placeholder.
+The placeholder screen is gone. Opening the site now gets you a file chooser, a
+waveform, and a player: pick or drop a recording and it is decoded in the page,
+drawn, and playable, with a playhead that tracks it and a click anywhere on the
+waveform seeking there.
+
+The split between `src/core/` and `src/web/` was drawn where the tests are.
+`src/core/peaks.js` reduces a few million samples to one min/max pair per pixel
+column and `src/core/timeline.js` maps a time to a position and back; both are
+arithmetic, both run in the offline suite, and both are where a waveform goes
+wrong in ways that still draw a plausible picture. What is left in `src/web/` is
+glue small enough to read: get an `AudioBuffer`, fill a path, move an element.
+
+Two things about that drawing are worth knowing, because they are easy to
+"simplify" back. A column keeps both its bounds rather than one magnitude, so an
+asymmetric or offset signal draws as itself instead of as a mirrored blob. And
+the canvas is painted once per file and once per resize, never during playback —
+the playhead is a separate element moved by a CSS custom property, which is the
+consumer the policy's `style-src 'unsafe-inline'` was granted for all along.
+
+Playback is an `<audio>` element over an object URL, and the `AudioContext` is
+opened to decode and closed immediately after. The element brings native
+transport, seeking, and a `currentTime` already in the seconds the core speaks;
+the context, left open, would hold an audio output device for a file nobody
+played.
+
+Sixteen more tests, so fifty-two. Still no transcript on the page and no
+whisper — this slice builds the timeline the words will be positioned against.
