@@ -1,0 +1,22 @@
+node_modules/
+dist/
+site/dist/
+*.local
+.DS_Store
+
+# The whisper.cpp WebAssembly build and the GGML weights are fetched, never
+# committed. The wasm is a few megabytes and the smallest useful model is tens
+# of them; both are content-addressed by their upstream release, so a copy in
+# this history would be a second source of truth that ages badly.
+#
+# In a browser they land in the Cache API and IndexedDB, which is the real
+# story. These two directories exist for the same files pulled locally -- by a
+# fetch script, or by hand while working offline.
+vendor/whisper/
+.models/
+
+# Fixture audio used while working on the waveform. Real recordings are other
+# people's voices; keeping them out of the history is deliberate, not tidiness.
+test/fixtures/*.wav
+test/fixtures/*.mp3
+test/fixtures/*.m4a
