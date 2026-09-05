@@ -3,15 +3,18 @@
  * scripts/build-site.mjs.
  *
  * Audio in, subtitle file out. Open a recording, see it, play it, click it,
- * transcribe it, and download the SRT or VTT. The transcript is not drawn on
- * the page yet -- that is the next slice, and this one exists to make the
- * engine underneath it trustworthy first.
+ * transcribe it, read it with the current word highlighted as it plays, and
+ * download the SRT or VTT. Editing the transcript -- correcting a word,
+ * splitting or merging segments, dragging a boundary -- is not wired up yet;
+ * src/core/transcript.js already has the operations, this page just does not
+ * call them.
  */
 
 import { el, formatDuration } from '../src/web/dom.js'
 import { decodeAudioFile, revokeAudioFile } from '../src/web/audio-file.js'
 import { createWaveform } from '../src/web/waveform.js'
 import { createPlayer } from '../src/web/player.js'
+import { createTranscriptView } from '../src/web/transcript-view.js'
 import { toWhisperSamples } from '../src/web/resample.js'
 import { createEngineClient } from '../src/web/engine-client.js'
 import { MODELS, DEFAULT_MODEL } from '../src/core/engine.js'
@@ -127,6 +130,8 @@ progress.hidden = true
 const controls = el('div', 'controls')
 controls.append(modelLabel, modelSelect, transcribeButton, srtButton, vttButton)
 
+const transcriptEl = el('div', 'transcript')
+
 const footer = el(
   'p',
   'footer',
@@ -137,10 +142,22 @@ const footer = el(
       'the build.',
 )
 
-app.append(heading, chooser, status, surface, audio, controls, progress, engineStatus, footer)
+app.append(
+  heading,
+  chooser,
+  status,
+  surface,
+  audio,
+  controls,
+  transcriptEl,
+  progress,
+  engineStatus,
+  footer,
+)
 
 const waveform = createWaveform(canvas)
 const player = createPlayer({ audio, surface })
+const transcriptView = createTranscriptView({ container: transcriptEl, audio })
 
 // Substituted by the build, which bundles the worker first so that this name --
 // which carries a content hash -- exists to substitute. See types/build.d.ts.
@@ -190,6 +207,7 @@ async function open(file) {
     srtButton.disabled = true
     vttButton.disabled = true
     engineStatus.textContent = 'No transcript yet.'
+    transcriptView.clear()
 
     status.textContent = `${decoded.name} — ${formatDuration(decoded.duration)}`
     transcribeButton.disabled = false
@@ -286,6 +304,7 @@ async function transcribe() {
     engineStatus.textContent = `${words} words in ${transcript.segments.length} segments.`
     srtButton.disabled = words === 0
     vttButton.disabled = words === 0
+    transcriptView.render(transcript)
   } catch (error) {
     engineStatus.textContent = message(error)
   } finally {
