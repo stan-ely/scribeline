@@ -68,7 +68,7 @@ jobs:
       # and it does not, because an emscripten build of whisper.cpp is minutes
       # that a stylesheet edit should not pay for.
       - id: engine
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: vendor/whisper
           key: whisper-${{ hashFiles('scripts/fetch-whisper.mjs', 'whisper/emscripten.cpp', 'whisper/CMakeLists.txt') }}
