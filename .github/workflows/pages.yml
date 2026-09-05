@@ -59,6 +59,28 @@ jobs:
       - run: npm test
       - run: npm run typecheck
 
+      # The engine is a compiled artifact, not a checked-in one -- see
+      # scripts/fetch-whisper.mjs. It is cached on the inputs that determine it:
+      # the whisper.cpp tag and the two files that replace upstream's. Change
+      # either and the key changes and the build reruns; change anything else
+      # and it does not, because an emscripten build of whisper.cpp is minutes
+      # that a stylesheet edit should not pay for.
+      - id: engine
+        uses: actions/cache@v4
+        with:
+          path: vendor/whisper
+          key: whisper-${{ hashFiles('scripts/fetch-whisper.mjs', 'whisper/emscripten.cpp', 'whisper/CMakeLists.txt') }}
+
+      - if: steps.engine.outputs.cache-hit != 'true'
+        run: node scripts/fetch-whisper.mjs
+
+      # Fails the deploy rather than publishing a page whose Transcribe button
+      # does nothing. `npm run build` deliberately tolerates a missing engine so
+      # that a clone without a wasm toolchain still works; a deploy is the one
+      # place where that tolerance would ship a broken promise.
+      - name: Check the engine was built
+        run: test -f vendor/whisper/whisper.js
+
       - run: npm run build
 
       - uses: actions/configure-pages@v6

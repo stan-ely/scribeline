@@ -60,3 +60,81 @@ played.
 
 Sixteen more tests, so fifty-two. Still no transcript on the page and no
 whisper — this slice builds the timeline the words will be positioned against.
+
+The engine arrived. Open a recording, pick a model, press Transcribe, and get
+an SRT or a VTT back. whisper.cpp runs as WebAssembly in a worker on the page,
+the weights are downloaded once and kept in the Cache API, and the audio still
+never leaves the machine.
+
+It is a patched build, and that is the thing worth knowing. Upstream's
+emscripten binding exposes `full_default`, which returns 0 or -1 and prints the
+transcript through a printf callback — there is no route from it to a
+timestamp. Since this app is built on words carrying their own timings, the
+forty lines in `whisper/emscripten.cpp` that turn whisper's token times into a
+returned value are the difference between it and a different, worse app.
+`scripts/fetch-whisper.mjs` builds it from a pinned tag with emscripten, through
+Docker on a machine without a toolchain, and writes the diff against upstream
+next to the output so what was changed stays one file away.
+
+Two builds are produced and the host picks. The threaded one needs
+`SharedArrayBuffer` and therefore the two headers in `site/_headers`, which
+Netlify and Cloudflare Pages read and GitHub Pages ignores; anywhere the headers
+do not arrive, the single-threaded build loads instead and runs on one core.
+
+Making those two builds actually different took an edit nobody would guess at.
+whisper.cpp compiles every emscripten target with `-pthread` unconditionally, so
+link flags cannot turn threading off — the first pair came out as byte-identical
+wasm, both requiring `SharedArrayBuffer`, and the "single-threaded" build was
+single-threaded in name only. `scripts/fetch-whisper.mjs` now makes those two
+lines conditional, and asserts on the exact text so an upstream change fails the
+build rather than quietly producing one binary twice.
+
+Neither build contains an `eval`. `DYNAMIC_EXECUTION=0` is passed to emscripten
+because the generated policy grants `'wasm-unsafe-eval'` — which permits
+WebAssembly compilation and nothing else — and deliberately not `'unsafe-eval'`.
+A CSP does not care whether a branch is reachable, so without that flag the glue
+would fail to load and the honest fix would look like loosening the policy.
+
+A whisper token is not a word, and the first real transcript said so: three
+seconds of audio came back as `once upon a time .`, five words, the last of
+them a full stop. The tokenizer is byte-pair and marks a word boundary with a
+leading space, so punctuation arrives as its own token and a long word arrives
+in pieces — "unbelievable" as `un`, `bel`, `iev`, `able`. Left alone that is a
+transcript of fragments, each one separately clickable and separately wrong.
+The adapter now joins a token to the word before it when it carries no leading
+space, and takes the least confident piece as the word's confidence, because a
+word is only as trustworthy as its worst part.
+
+The threaded build deadlocked, and the reason is worth writing down. This
+binding calls `whisper_full` synchronously; emscripten starts a pthread by
+posting to a Worker and waiting for it to come up, which needs the starting
+thread's event loop to run — and that thread is blocked inside `whisper_full`
+waiting for the very threads it is trying to start. A three-second clip
+transcribed forever. Upstream never meets this because it runs `whisper_full`
+on a detached thread and prints its results instead of returning them. The fix
+is `PTHREAD_POOL_SIZE`, which spawns the workers during module instantiation,
+before anything blocks.
+
+The policy needed new redirect targets, and finding out how was the point of
+trying it against a real network. Hugging Face has moved `resolve/` downloads
+onto Xet storage, so a request to `huggingface.co` now redirects to
+`<region>.aws.cdn.hf.co` rather than to the `cdn-lfs` hosts named in
+`engine.js`. A CSP blocks a redirect to an origin it does not name, so the
+download failed with `Failed to fetch` — which is precisely the failure that
+list of hand-written origins was written to prevent, arriving anyway because
+the destination changed underneath it. The entry is a wildcard, because the
+subdomain names the region the client is served from: one host would have
+worked in the country it was tested in.
+
+Three smaller things that were wrong and are now not. `WASM_PATH` named a bare
+`.wasm` file, which emscripten never emits — what is loaded is JS glue — and it
+began with a slash, which resolves to the domain root on a project Pages site
+served from `/scribeline/`: correct in every local test and a 404 in production.
+Audio is now decoded straight to whisper's 16 kHz instead of the output device's
+rate, which is a sixth of the memory on an hour-long recording and a resample
+nobody has to write. And `npm test` names its directory, now that a checkout of
+whisper.cpp with its own test suite lives under `vendor/`.
+
+Thirty more tests, so eighty-two. The transcript still is not drawn on
+the page — this slice was about making the thing underneath it trustworthy
+first.

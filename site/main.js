@@ -2,15 +2,23 @@
  * The page entry point. Bundled to site/dist/main.<hash>.js by
  * scripts/build-site.mjs.
  *
- * This is the first screen that does something: open a recording, see it, play
- * it, click it. There is no transcript yet -- what this slice builds is the
- * timeline the words will be positioned against.
+ * Audio in, subtitle file out. Open a recording, see it, play it, click it,
+ * transcribe it, and download the SRT or VTT. The transcript is not drawn on
+ * the page yet -- that is the next slice, and this one exists to make the
+ * engine underneath it trustworthy first.
  */
 
 import { el, formatDuration } from '../src/web/dom.js'
 import { decodeAudioFile, revokeAudioFile } from '../src/web/audio-file.js'
 import { createWaveform } from '../src/web/waveform.js'
 import { createPlayer } from '../src/web/player.js'
+import { toWhisperSamples } from '../src/web/resample.js'
+import { createEngineClient } from '../src/web/engine-client.js'
+import { MODELS, DEFAULT_MODEL } from '../src/core/engine.js'
+import { downloadModel, isModelCached } from '../src/core/download.js'
+import { toSRT, toVTT } from '../src/core/subtitles.js'
+
+/** @typedef {import('../src/core/transcript.js').Transcript} Transcript */
 
 /**
  * Refuse to run inside a frame.
@@ -38,8 +46,8 @@ if (window.top !== window.self) {
  * This is not a capability to check at the point of use. It is decided by
  * response headers before any of our code runs, it cannot be recovered from at
  * runtime, and the difference it makes is roughly an order of magnitude in
- * transcription speed. The app is expected to read this once and choose a
- * single-threaded build when it is false, rather than fail.
+ * transcription speed. The app reads it once and loads a single-threaded engine
+ * build when it is false, rather than failing.
  *
  * See the header comment in scripts/build-site.mjs for why it is false on some
  * hosts no matter what this repository does.
@@ -81,28 +89,77 @@ audio.controls = true
 // volume, and speed. It has no source until a file is opened.
 audio.preload = 'metadata'
 
+// --- The engine's controls -------------------------------------------------
+
+const modelSelect = el('select', 'model-select')
+modelSelect.id = 'model'
+for (const [id, model] of Object.entries(MODELS)) {
+  const option = el('option', null, `${model.label} — ${megabytes(model.bytes)}`)
+  option.value = id
+  modelSelect.append(option)
+}
+modelSelect.value = DEFAULT_MODEL
+
+const modelLabel = el('label', 'field-label', 'Model')
+modelLabel.htmlFor = modelSelect.id
+
+const transcribeButton = el('button', 'action', 'Transcribe')
+transcribeButton.type = 'button'
+transcribeButton.disabled = true
+
+const srtButton = el('button', 'action', 'Download SRT')
+srtButton.type = 'button'
+srtButton.disabled = true
+
+const vttButton = el('button', 'action', 'Download VTT')
+vttButton.type = 'button'
+vttButton.disabled = true
+
+const engineStatus = el('p', 'status', 'No transcript yet.')
+engineStatus.setAttribute('role', 'status')
+
+// A <progress> with no value is indeterminate, which is exactly right for the
+// gap between pressing Transcribe and whisper reporting its first percent.
+const progress = el('progress', 'progress')
+progress.max = 100
+progress.hidden = true
+
+const controls = el('div', 'controls')
+controls.append(modelLabel, modelSelect, transcribeButton, srtButton, vttButton)
+
 const footer = el(
   'p',
   'footer',
   THREADS_AVAILABLE
-    ? 'Cross-origin isolated: threaded inference will be available.'
+    ? 'Cross-origin isolated: threaded inference is available.'
     : 'Not cross-origin isolated, so SharedArrayBuffer is unavailable and ' +
-      'transcription will run single-threaded. That is the deploy host, not ' +
+      'transcription runs single-threaded. That is the deploy host, not ' +
       'the build.',
 )
 
-app.append(heading, chooser, status, surface, audio, footer)
+app.append(heading, chooser, status, surface, audio, controls, progress, engineStatus, footer)
 
 const waveform = createWaveform(canvas)
 const player = createPlayer({ audio, surface })
 
-/**
- * The URL of the file currently loaded, so it can be released when the next one
- * replaces it.
- *
- * @type {string | null}
- */
+// Substituted by the build, which bundles the worker first so that this name --
+// which carries a content hash -- exists to substitute. See types/build.d.ts.
+const engine = createEngineClient(new URL(__WHISPER_WORKER__, document.baseURI).href)
+
+// --- State -----------------------------------------------------------------
+
+/** The object URL of the file currently loaded, released when the next replaces it. @type {string | null} */
 let currentUrl = null
+/** @type {AudioBuffer | null} */
+let currentBuffer = null
+/** @type {string} */
+let currentName = ''
+/** @type {Transcript | null} */
+let transcript = null
+/** Whether the loaded model matches the one the select is showing. @type {string | null} */
+let loadedModel = null
+
+// --- Opening a recording ---------------------------------------------------
 
 /** @param {File | undefined | null} file */
 async function open(file) {
@@ -118,14 +175,26 @@ async function open(file) {
     // picked the wrong file out of a folder.
     revokeAudioFile(currentUrl)
     currentUrl = decoded.url
+    currentBuffer = decoded.audioBuffer
+    currentName = decoded.name
 
     audio.src = decoded.url
     player.setDuration(decoded.duration)
     waveform.setBuffer(decoded.audioBuffer)
 
+    // A new recording invalidates the old transcript. Leaving the export
+    // buttons live would hand someone the previous file's subtitles under this
+    // file's name, which is a mistake they would not find until a player
+    // disagreed with them.
+    transcript = null
+    srtButton.disabled = true
+    vttButton.disabled = true
+    engineStatus.textContent = 'No transcript yet.'
+
     status.textContent = `${decoded.name} — ${formatDuration(decoded.duration)}`
+    transcribeButton.disabled = false
   } catch (error) {
-    status.textContent = error instanceof Error ? error.message : String(error)
+    status.textContent = message(error)
   }
 }
 
@@ -148,3 +217,125 @@ surface.addEventListener('drop', (event) => {
   surface.classList.remove('is-dropping')
   void open(event.dataTransfer?.files[0])
 })
+
+// --- Transcribing ----------------------------------------------------------
+
+transcribeButton.addEventListener('click', () => void transcribe())
+
+async function transcribe() {
+  if (!currentBuffer) return
+
+  const id = modelSelect.value
+  const model = MODELS[/** @type {keyof typeof MODELS} */ (id)]
+  if (!model) return
+
+  transcribeButton.disabled = true
+  modelSelect.disabled = true
+  progress.hidden = false
+  progress.removeAttribute('value')
+
+  try {
+    if (loadedModel !== id) {
+      // Said before it starts, not after. This is a download measured in tens
+      // of megabytes and someone on a metered connection is entitled to know
+      // that is what the button did.
+      const cached = await isModelCached(model.url, { caches })
+      engineStatus.textContent = cached
+        ? `Loading ${model.label}…`
+        : `Downloading ${model.label} (${megabytes(model.bytes)})…`
+
+      const bytes = await downloadModel(model.url, {
+        fetch: globalThis.fetch.bind(globalThis),
+        caches,
+        onProgress: ({ loaded, total, cached: fromCache }) => {
+          if (fromCache) return
+          engineStatus.textContent = total
+            ? `Downloading ${model.label}: ${megabytes(loaded)} of ${megabytes(total)}`
+            : `Downloading ${model.label}: ${megabytes(loaded)}`
+          if (total) progress.value = (loaded / total) * 100
+        },
+      })
+
+      engineStatus.textContent = `Loading ${model.label} into the engine…`
+      progress.removeAttribute('value')
+      await engine.load(bytes)
+      loadedModel = id
+    }
+
+    engineStatus.textContent = 'Transcribing…'
+    const samples = await toWhisperSamples(currentBuffer)
+    const duration = currentBuffer.duration
+
+    transcript = await engine.transcribe(
+      samples,
+      duration,
+      {},
+      {
+        onProgress: (percent) => {
+          progress.value = percent
+        },
+        onSegment: (text, endSeconds) => {
+          // The partial text, as it decodes. Whisper works in order, so this is
+          // both a preview and the honest answer to "is it stuck".
+          engineStatus.textContent = `${formatDuration(endSeconds)} / ${formatDuration(duration)} — ${text.trim()}`
+        },
+      },
+    )
+
+    const words = transcript.segments.reduce((n, segment) => n + segment.words.length, 0)
+    engineStatus.textContent = `${words} words in ${transcript.segments.length} segments.`
+    srtButton.disabled = words === 0
+    vttButton.disabled = words === 0
+  } catch (error) {
+    engineStatus.textContent = message(error)
+  } finally {
+    progress.hidden = true
+    transcribeButton.disabled = false
+    modelSelect.disabled = false
+  }
+}
+
+// --- Exporting -------------------------------------------------------------
+
+srtButton.addEventListener('click', () => save(toSRT, 'srt'))
+vttButton.addEventListener('click', () => save(toVTT, 'vtt'))
+
+/**
+ * Hand the transcript over as a file.
+ *
+ * An object URL and a synthetic click on an <a download>, which needs no CSP
+ * directive and no server. The URL is revoked immediately after: the browser
+ * has already taken what it needs by then, and an un-revoked one keeps the
+ * whole subtitle file resident for the life of the tab.
+ *
+ * @param {(transcript: Transcript) => string} render
+ * @param {string} extension
+ */
+function save(render, extension) {
+  if (!transcript) return
+
+  const blob = new Blob([render(transcript)], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+
+  const link = el('a')
+  link.href = url
+  // The recording's name with the extension swapped, so a folder of recordings
+  // exports into a folder of matching subtitle files rather than a folder of
+  // transcript.srt, transcript (1).srt.
+  link.download = currentName.replace(/\.[^.]+$/, '') + '.' + extension
+  link.click()
+
+  URL.revokeObjectURL(url)
+}
+
+// --- Small helpers ---------------------------------------------------------
+
+/** @param {number} bytes */
+function megabytes(bytes) {
+  return `${Math.round(bytes / 1_000_000)} MB`
+}
+
+/** @param {unknown} error */
+function message(error) {
+  return error instanceof Error ? error.message : String(error)
+}

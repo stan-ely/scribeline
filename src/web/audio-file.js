@@ -4,6 +4,8 @@
  * Browser-only. Checked under tsconfig.json alone.
  */
 
+import { createDecoderContext } from './resample.js'
+
 /**
  * A decoded recording: the samples, and a URL an <audio> element can play.
  *
@@ -35,7 +37,14 @@
  */
 export async function decodeAudioFile(file) {
   const bytes = await file.arrayBuffer()
-  const context = new AudioContext()
+  // Decoded straight to whisper's 16 kHz rather than the output device's rate.
+  // `decodeAudioData` resamples to its context, so this makes the browser's own
+  // decoder do a conversion that would otherwise be a second pass over the
+  // audio later -- and it holds a sixth of the memory of the same recording at
+  // 48 kHz stereo, which matters on the hour-long files this page is for. The
+  // waveform is unaffected: peaks are one measurement per pixel column, and no
+  // display has enough columns to know the difference.
+  const context = createDecoderContext()
 
   let audioBuffer
   try {

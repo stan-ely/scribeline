@@ -14,20 +14,25 @@
  * CROSS-ORIGIN ISOLATION, WHICH IS THE ONE THING TO KNOW ABOUT THIS BUILD:
  * threaded whisper.cpp inference needs SharedArrayBuffer, which a browser only
  * exposes to a cross-origin-isolated page, which requires two response headers
- * (COOP and COEP). Those live in site/_headers. That file is read by Cloudflare
- * Pages and Netlify and is NOT read by GitHub Pages, which serves no custom
- * headers -- so on the current deploy target the shipped app is single-threaded
- * no matter what is written here. The dev server below DOES send them, so
- * `npm start` is faster than production, which is the wrong way round and is
- * exactly why it is written down. Resolving it means moving hosts or injecting
- * the headers from a service worker; neither is a scaffold-sized decision.
+ * (COOP and COEP). Those live in site/_headers. That file is read by Netlify and
+ * Cloudflare Pages and is NOT read by GitHub Pages, which serves no custom
+ * headers at all.
+ *
+ * So the engine that loads is decided by the host, and both have to work. The
+ * dev server below sends the headers, so `npm start` is isolated and runs the
+ * threaded build. A host that ignores _headers gets the single-threaded one,
+ * which is several times slower and is the path nothing exercises unless
+ * somebody deliberately removes the two setHeader calls and tries it.
+ *
+ * The CSP itself is unaffected by any of this: it is delivered in a <meta> tag
+ * generated below, so it survives a host that sets no headers whatsoever.
  */
 
 import * as esbuild from 'esbuild'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { createReadStream } from 'node:fs'
-import { readFile, writeFile, copyFile, rm, mkdir, stat } from 'node:fs/promises'
+import { readFile, writeFile, copyFile, readdir, rm, mkdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -124,30 +129,33 @@ export function buildCSP(engineOrigins) {
 }
 
 /**
- * Bundles site/main.js with esbuild's JS API -- never the CLI, which would make
- * this script depend on a separately installed binary rather than on a
+ * Bundle one entry point with esbuild's JS API -- never the CLI, which would
+ * make this script depend on a separately installed binary rather than on a
  * devDependency.
  *
- * `splitting: true` produces a single file today, because nothing is
- * dynamically imported yet. It is on from the start because the thing that will
- * be dynamically imported is the whisper glue, and the whole reason to load that
- * lazily is so a visitor who never opens a file never downloads it. Turning
- * splitting on at that point would be a build change tangled up in a feature
- * change.
+ * `splitting: true` is on although each entry currently produces one file. The
+ * thing that gets dynamically imported is the whisper glue, which the worker
+ * loads by URL at runtime rather than through the bundler, so splitting earns
+ * its keep the moment anything else is loaded lazily.
  *
  * Output names are content-hashed so a redeploy is never served stale out of a
  * browser or CDN cache under an old name; index.html's script tag is rewritten
- * to match after the build.
+ * to match after the build, and the worker's name is substituted into the page's
+ * bundle.
  *
  * Source maps ship on purpose. The page's claim is that the audio never leaves
  * the machine, and that is not a claim anyone can check by reading minified
  * output. A source map makes the deployed bundle legible in devtools, so the
  * claim can be verified against the code actually running rather than against
  * the code in this repository. Every line of it is public already.
+ *
+ * @param {string} entry absolute path to the entry module
+ * @param {Record<string, string>} [define]
+ * @returns {Promise<{ file: string, outputs: string[] }>}
  */
-async function bundle() {
+async function bundleEntry(entry, define = {}) {
   const result = await esbuild.build({
-    entryPoints: [path.join(SITE, 'main.js')],
+    entryPoints: [entry],
     outdir: DIST,
     bundle: true,
     minify: true,
@@ -161,28 +169,82 @@ async function bundle() {
     chunkNames: '[name].[hash]',
     metafile: true,
     absWorkingDir: ROOT,
+    define,
   })
 
-  const mainJsRel = path
-    .relative(ROOT, path.join(SITE, 'main.js'))
-    .split(path.sep)
-    .join('/')
+  const entryRel = path.relative(ROOT, entry).split(path.sep).join('/')
 
   /** @type {string | null} */
-  let entryOutput = null
+  let output = null
   for (const [outFile, info] of Object.entries(result.metafile.outputs)) {
-    if (info.entryPoint === mainJsRel) {
-      entryOutput = outFile
+    if (info.entryPoint === entryRel) {
+      output = outFile
       break
     }
   }
-  if (!entryOutput) throw new Error('esbuild did not report an output for site/main.js')
+  if (!output) throw new Error(`esbuild did not report an output for ${entryRel}`)
+
+  // Filename only: everything that references these is relative to site/dist/.
+  return { file: path.basename(output), outputs: Object.keys(result.metafile.outputs) }
+}
+
+/**
+ * Bundle the page and the transcription worker.
+ *
+ * TWO PASSES, AND THE ORDER MATTERS. The worker is built first because the page
+ * has to name it, and its name carries a content hash that does not exist until
+ * it has been built. The name is then handed to the page's build as a `define`,
+ * which is the same discipline index.html's placeholders use: one fact, written
+ * once, substituted in -- rather than a filename typed out in two files that
+ * must agree, where the drift is a worker that 404s only after a redeploy.
+ *
+ * The cost of two passes is that the page and the worker do not share a split
+ * chunk. They share almost nothing anyway -- the worker's only import from this
+ * repository is the adapter -- and a shared chunk between a document and a
+ * worker would be fetched twice regardless.
+ */
+async function bundle() {
+  const worker = await bundleEntry(path.join(SITE, 'whisper-worker.js'))
+  const main = await bundleEntry(path.join(SITE, 'main.js'), {
+    __WHISPER_WORKER__: JSON.stringify(worker.file),
+  })
 
   return {
-    // Filename only: index.html's script src is relative to site/dist/.
-    entryFile: path.basename(entryOutput),
-    outputs: Object.keys(result.metafile.outputs),
+    entryFile: main.file,
+    workerFile: worker.file,
+    outputs: [...worker.outputs, ...main.outputs],
   }
+}
+
+/**
+ * Copy the built whisper engine into the bundle, if it has been built.
+ *
+ * ABSENCE IS NOT AN ERROR. The engine is produced by
+ * `node scripts/fetch-whisper.mjs`, which needs emscripten -- through Docker,
+ * on most machines. Making the site build depend on that would mean every
+ * clone, every CI run, and every change to a stylesheet needed a wasm
+ * toolchain. The page copes: it reports that the engine is not built and
+ * everything except transcription works.
+ *
+ * @returns {Promise<string[]>} the files copied
+ */
+async function copyEngine() {
+  const from = path.join(ROOT, 'vendor', 'whisper')
+  const entries = await readdir(from).catch(() => null)
+  if (!entries) return []
+
+  // Filtered before the directory is created, so a vendor/ holding only the
+  // build's own scratch -- the checkout it cloned, the diff it wrote -- does not
+  // leave an empty whisper/ in the bundle looking like a half-finished copy.
+  const engine = entries.filter((entry) => /\.(js|wasm)$/.test(entry))
+  if (engine.length === 0) return []
+
+  const to = path.join(DIST, 'whisper')
+  await mkdir(to, { recursive: true })
+  for (const entry of engine) {
+    await copyFile(path.join(from, entry), path.join(to, entry))
+  }
+  return engine
 }
 
 /**
@@ -193,13 +255,14 @@ async function bundle() {
  * every engine origin, no placeholder survives) are about the output, and a test
  * that rebuilt the output itself would assert nothing about this file.
  *
- * @returns {Promise<{ entryFile: string, cssFile: string, outputs: string[] }>}
+ * @returns {Promise<{ entryFile: string, workerFile: string, cssFile: string, engineFiles: string[], outputs: string[] }>}
  */
 export async function build() {
   await rm(DIST, { recursive: true, force: true })
   await mkdir(DIST, { recursive: true })
 
-  const { entryFile, outputs } = await bundle()
+  const { entryFile, workerFile, outputs } = await bundle()
+  const engineFiles = await copyEngine()
 
   // Content-hashed exactly like the JS. Hosts commonly serve static files with a
   // short max-age, so for a few minutes after a deploy a returning visitor can
@@ -238,7 +301,7 @@ export async function build() {
 
   await writeFile(path.join(DIST, 'index.html'), html)
 
-  return { entryFile, cssFile, outputs }
+  return { entryFile, workerFile, cssFile, engineFiles, outputs }
 }
 
 /** @type {Record<string, string>} */
@@ -302,9 +365,14 @@ async function serveDist() {
 // Run the build only when invoked as a script (`node scripts/build-site.mjs`),
 // not when imported -- test/build-site.test.mjs calls build() itself.
 if (import.meta.filename === process.argv[1]) {
-  const { entryFile, outputs } = await build()
+  const { entryFile, outputs, engineFiles } = await build()
   console.log(
     `Built site/dist/ (${outputs.length} output${outputs.length === 1 ? '' : 's'}, entry: ${entryFile})`,
+  )
+  console.log(
+    engineFiles.length
+      ? `Engine: ${engineFiles.join(', ')}`
+      : 'Engine: not built -- run `node scripts/fetch-whisper.mjs`. Everything except transcription works without it.',
   )
   if (process.argv.includes('--serve')) await serveDist()
 }

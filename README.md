@@ -12,13 +12,19 @@ compiled to WebAssembly and run inside the page. There is no server, no upload,
 and no account. Your audio does not leave the device, which is not a policy —
 there is nowhere for it to go.
 
-> **Status: early.** Half of the first sentence above is true. Opening the site
-> gets you a file chooser, a waveform, and a player — pick a recording and it is
-> decoded in the page, drawn, and playable, and clicking the waveform seeks
-> there. `src/core/` holds the transcript document too: the word and segment
-> model, the editing operations, and SRT/VTT export, under test. What is missing
-> is the part in the middle. There is no whisper yet, so nothing produces a
-> transcript, and nothing draws one next to the audio.
+> **Status: early, but it works end to end.** Open a recording, see its
+> waveform, play it, click it to seek. Pick a model, press Transcribe, and
+> whisper.cpp runs as WebAssembly in the page and hands back a transcript with
+> word-level timings — which you can download as SRT or VTT.
+>
+> What is missing is the editor. The transcript is not drawn next to the audio
+> yet, so there is nothing to click a word in, nothing to drag a boundary on,
+> and no way to fix a misheard name. `src/core/` already holds the document
+> model and every operation that editor will call; what it does not have is a
+> screen.
+>
+> Transcription needs the engine built once — see **Building the engine** below.
+> Everything else works without it.
 
 ---
 
@@ -59,14 +65,44 @@ npm start             # build + serve site/dist/ on http://localhost:4173
 `localhost` counts as a secure context, so the file picker and the microphone
 work against `npm start` without a certificate.
 
+## Building the engine
+
+Transcription needs a WebAssembly build of whisper.cpp, which is **not** in this
+repository — it is compiled from a pinned tag into `vendor/whisper/`:
+
+```bash
+node scripts/fetch-whisper.mjs      # both builds
+node scripts/fetch-whisper.mjs --single   # just the one that ships
+```
+
+It needs emscripten. If `emcmake` is on your `PATH` it is used directly;
+otherwise the script runs a pinned `emscripten/emsdk` image, so **Docker running
+is enough** — nothing needs installing. It takes a few minutes the first time.
+
+Everything else works without it. `npm test`, `npm run typecheck`, `npm run
+build`, and `npm start` all succeed with `vendor/whisper/` absent; the page
+loads, draws, and plays, and only the Transcribe button is inert.
+
+**Why it is built rather than downloaded.** whisper.cpp's own WebAssembly
+example exposes a binding that returns `0` or `-1` and prints the transcript
+through a `printf` callback — it cannot return a timestamp. This app is built on
+words carrying their own timings, so `whisper/emscripten.cpp` replaces that
+binding with one that returns whisper's token times as data. It is about forty
+lines, it is the reason any of this works, and the diff against upstream is
+written to `vendor/whisper/upstream.diff` on every build.
+
 ## Layout
 
 ```
-src/core/    timestamp maths, segment boundaries, peaks, SRT/VTT. No DOM, no fs.
-src/web/     everything that needs a DOM: decode, canvas, playhead.
-site/        the page: index.html, main.js, styles.css -> built to site/dist/
-scripts/     build-site.mjs
+src/core/    timestamp maths, segment boundaries, peaks, model download,
+             the whisper adapter, SRT/VTT. No DOM, no fs.
+src/web/     everything that needs a DOM: decode, canvas, playhead, worker client.
+site/        the page: index.html, main.js, styles.css, whisper-worker.js
+             -> built to site/dist/
+whisper/     the two files that replace their namesakes in whisper.cpp's tree
+scripts/     build-site.mjs, fetch-whisper.mjs
 test/        node --test
+vendor/      the built engine. Generated, never committed.
 ```
 
 `src/core/` is typechecked twice, once with the DOM and `types: []` and once
@@ -81,11 +117,21 @@ faster with threads, threads need `SharedArrayBuffer`, and browsers only expose
 that to a cross-origin-isolated page — which requires
 `Cross-Origin-Opener-Policy: same-origin` and
 `Cross-Origin-Embedder-Policy: require-corp`. They are in `site/_headers`, which
-**Cloudflare Pages and Netlify read and GitHub Pages does not**. The dev server
-sends them, so local development is isolated and a GitHub Pages deploy is not.
-That is the wrong way round and it is deliberately written down in
-`scripts/build-site.mjs`, `site/_headers`, and `.github/workflows/pages.yml`
-rather than left to be discovered.
+**Netlify and Cloudflare Pages read and GitHub Pages does not**.
+
+So the host decides which engine loads, and both builds ship. Where the headers
+arrive, the page loads `whisper-mt.js` and uses every core; where they do not,
+it loads `whisper.js` and runs on one. The dev server sends them, so `npm start`
+matches an isolated deploy — which means the single-threaded path is the one
+local development never exercises. Comment out the two `setHeader` calls in
+`scripts/build-site.mjs` to try it.
+
+**Deploying somewhere that needs the engine built.** The engine is compiled, not
+committed, and `scripts/fetch-whisper.mjs` reaches for Docker when no `emcmake`
+is on `PATH` — which most hosted build environments do not provide. The
+practical arrangement is to build it in CI, where Docker or emsdk is available
+and the result can be cached on the whisper.cpp tag, and to publish the finished
+`site/dist/` from there.
 
 **The policy is generated, not written.** `src/core/engine.js` lists the origins
 the app may fetch model weights from, and `scripts/build-site.mjs` builds

@@ -13,7 +13,7 @@ node = "24"
 
 [tasks.test]
 description = "Run unit tests"
-run = "node --test"
+run = "node --test \"test/**/*.test.mjs\""
 
 [tasks.typecheck]
 description = "Type-check the browser and Node projects"

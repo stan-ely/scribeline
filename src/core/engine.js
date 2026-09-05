@@ -24,10 +24,55 @@
  * policy every cross-origin subresource must opt in with CORP or CORS headers
  * we do not control. A same-origin wasm binary sidesteps the whole question.
  *
- * The file is not committed (see .gitignore); a fetch step will place it here
- * at build time. Same-origin, so it contributes no CSP entry.
+ * The files are not committed (see .gitignore); scripts/fetch-whisper.mjs
+ * builds them there. Same-origin, so they contribute no CSP entry.
+ *
+ * WHAT IS LOADED IS THE JS GLUE, NOT THE WASM. Emscripten emits a loader that
+ * fetches and instantiates the binary beside it; the `.wasm` is never fetched
+ * by this application's own code. An earlier version of this file named
+ * `whisper.wasm` directly, which would have failed at the first `import()`.
+ *
+ * THE PATH IS RELATIVE, AND THAT IS THE LOAD-BEARING PART. This app deploys to
+ * a project Pages site under a path -- see ORIGIN in scripts/build-site.mjs,
+ * which is `https://stan-ely.com/scribeline`, not a bare domain. A leading
+ * slash here resolves to the domain root, so an absolute path 404s in
+ * production and works in every local test, which is the worst available
+ * combination. Callers resolve these against `import.meta.url`.
  */
-export const WASM_PATH = '/whisper/whisper.wasm'
+export const ENGINE_DIR = 'whisper/'
+
+/**
+ * The two builds, and which one a page may use.
+ *
+ * `threaded` needs `SharedArrayBuffer` and therefore a cross-origin-isolated
+ * page. `single` needs nothing and is slower by roughly an order of magnitude.
+ *
+ * BOTH ARE SHIPPED, AND WHICH ONE LOADS IS THE HOST'S DECISION, not this
+ * application's. A host that reads site/_headers (Netlify, Cloudflare Pages)
+ * sends COOP/COEP and gets `threaded`; one that does not (GitHub Pages) gets
+ * `single`, as does any browser without SharedArrayBuffer.
+ *
+ * `single` is therefore the branch that nothing exercises by default -- the dev
+ * server sends the headers, so local development always takes the other one.
+ * It is a real code path with real users behind it, and the only way to know it
+ * works is to remove those headers and run it.
+ *
+ * @type {Readonly<{ threaded: string, single: string }>}
+ */
+export const ENGINE_FILES = Object.freeze({
+  threaded: 'whisper-mt.js',
+  single: 'whisper.js',
+})
+
+/**
+ * Which build this page may load.
+ *
+ * @param {boolean} isolated whether the page is cross-origin isolated
+ * @returns {string} a path relative to the bundle
+ */
+export function engineFile(isolated) {
+  return ENGINE_DIR + (isolated ? ENGINE_FILES.threaded : ENGINE_FILES.single)
+}
 
 /**
  * The GGML weights, by model id.
@@ -86,9 +131,28 @@ export const DEFAULT_MODEL = 'base.en'
 export const ENGINE_ORIGINS = Object.freeze([
   ...new Set([
     ...Object.values(MODELS).map((m) => new URL(m.url).origin),
-    // The CDN that huggingface.co redirects `resolve/` downloads to. Not
-    // derivable from the URLs above -- it only appears in a Location header --
-    // so it is the one entry in this file that is written out by hand.
+
+    // THE REDIRECT TARGETS, which are not derivable from the URLs above --
+    // they only ever appear in a Location header. These are the entries in
+    // this file written out by hand, and they are the ones that break.
+    //
+    // Hugging Face has moved `resolve/` downloads onto Xet storage: a download
+    // that used to land on cdn-lfs.huggingface.co now redirects to
+    // `<region>.aws.cdn.hf.co`. A CSP blocks a redirect to an origin it does
+    // not name, and the fetch fails with "Failed to fetch" and a console
+    // violation -- which is what happened the first time this was tried
+    // against a real network, exactly as the comment above predicted.
+    //
+    // The wildcard is deliberate: the subdomain carries the region the client
+    // is served from, so naming one host would work in the country it was
+    // tested in and fail elsewhere. A CSP host wildcard matches one or more
+    // leading labels, so this covers `us.aws.` as well as any other region.
+    'https://*.cdn.hf.co',
+    // The other Xet hostname, used by some repositories rather than the
+    // regional CDN above.
+    'https://cas-bridge.xethub.hf.co',
+    // The pre-Xet CDN. Still serving repositories that have not been migrated,
+    // so it stays until every model in MODELS is known to have moved.
     'https://cdn-lfs.huggingface.co',
     'https://cdn-lfs-us-1.huggingface.co',
   ]),

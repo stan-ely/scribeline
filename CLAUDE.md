@@ -18,6 +18,10 @@ npm run typecheck         # TWO tsc invocations; see below
 npm run build             # esbuild -> site/dist/
 npm start                 # build + serve site/dist/ on :4173
 
+node scripts/fetch-whisper.mjs   # build the wasm engine into vendor/whisper/
+                                 # needs emscripten, or just Docker running.
+                                 # Everything above works without it.
+
 node --test test/build-site.test.mjs                                  # one file
 node --test --test-name-pattern="connect-src" test/build-site.test.mjs # one test
 ```
@@ -54,13 +58,48 @@ a path-scoped entry fails in a way that looks like a network error, and the CDN
 origins need their own entries. That hand-written pair in `engine.js` looks
 redundant next to the derived list and is not; do not tidy it away.
 
-**Cross-origin isolation is not available on the deploy host.** COOP and COEP
-are in `site/_headers`, which GitHub Pages ignores. The dev server in
-`scripts/build-site.mjs` *does* send them, so local development is cross-origin
-isolated and production is not. Anything conditional on `crossOriginIsolated` —
-which will include the choice between the threaded and single-threaded whisper
-builds — must be exercised with those headers removed before it is believed. Do
-not write code that assumes `SharedArrayBuffer` exists.
+**Cross-origin isolation depends on the host, so both engine builds have to
+work.** COOP and COEP are in `site/_headers`, which **Netlify and Cloudflare
+Pages read and GitHub Pages ignores**. The dev server in `scripts/build-site.mjs`
+sends them too, so `npm start` is isolated. On a host that reads `_headers` the
+threaded build loads and inference is several times faster; anywhere else — a
+GitHub Pages deploy, a browser without `SharedArrayBuffer`, a preview URL served
+without the headers — the single-threaded build loads instead.
+
+That fallback is a real code path, not a theoretical one, and it is the one
+nothing exercises by default. Anything conditional on `crossOriginIsolated` must
+be run with those two `setHeader` calls in the dev server commented out before
+it is believed. Do not write code that assumes `SharedArrayBuffer` exists.
+
+The two builds are only genuinely different because
+`scripts/fetch-whisper.mjs` makes whisper.cpp's unconditional `-pthread`
+conditional. Without that edit both come out as byte-identical wasm that both
+require `SharedArrayBuffer` — verified, not assumed: they had the same md5 until
+it was added. If the single-threaded build ever starts failing on a
+non-isolated host, compare the two `.wasm` files first.
+
+**The engine is a patched build, and the patch is the only reason word timings
+exist.** `whisper/emscripten.cpp` and `whisper/CMakeLists.txt` replace their
+namesakes in whisper.cpp's tree at a pinned tag; `scripts/fetch-whisper.mjs`
+copies them in and writes the resulting diff to `vendor/whisper/upstream.diff`.
+Upstream's binding returns `0`/`-1` and prints through a `printf` callback — it
+cannot return a timestamp — so reverting to it produces a build that compiles,
+runs, and yields a transcript with every timing set to zero. If timings ever
+come back as zeroes, check that diff first: an empty one means the overlay did
+not land.
+
+**Emscripten is built with `-sDYNAMIC_EXECUTION=0`, and that flag is
+load-bearing.** The generated CSP grants `'wasm-unsafe-eval'` — WebAssembly
+compilation and nothing else — and deliberately not `'unsafe-eval'`. Emscripten's
+default output contains `eval` in paths this app never calls, and a CSP does not
+care whether a branch is reachable: without the flag the glue fails to load at
+all, and the obvious "fix" is to loosen the policy. Do not loosen the policy.
+
+**Times are centiseconds until `src/core/whisper-adapter.js` and seconds
+afterwards.** whisper.cpp reports token times in hundredths of a second. That
+adapter divides by 100 exactly once and is the only file permitted to see the
+other unit. A second division anywhere downstream produces a transcript that
+looks plausible and is a hundred times too short.
 
 **`site/main.js` refuses to run inside a frame, and that check is load-bearing.**
 `frame-ancestors` is only honoured as an HTTP response header, and the deploy

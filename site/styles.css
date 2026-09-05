@@ -153,6 +153,68 @@ noscript p {
   width: 100%;
 }
 
+/* The engine's controls: which model, transcribe, and the two exports.
+   One row that wraps, rather than a grid -- there are five controls and the
+   only relationship between them is left-to-right order. */
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-2);
+  margin: var(--sp-3) 0 var(--sp-2);
+}
+
+.field-label {
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.model-select,
+.action {
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.9375rem;
+}
+
+.action {
+  cursor: pointer;
+}
+
+.action:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Disabled controls are dimmed rather than hidden. Every one of them is
+   disabled for a reason the status line states -- no file open, no transcript
+   yet -- and a control that vanishes leaves that sentence answering a question
+   about something the reader can no longer see. */
+.action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.model-select:focus-visible,
+.action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Full width, because what it measures is the width of the page: a download of
+   tens of megabytes and then a transcription of a whole recording. Hidden
+   between runs via the `hidden` attribute rather than a class, so it is out of
+   the accessibility tree as well as out of the layout. */
+.progress {
+  width: 100%;
+  height: 0.5rem;
+  margin-bottom: var(--sp-1);
+}
+
 /* The threading readout. Deliberately quiet -- it is here to be checked, not
    read. It is also the only externally visible fact about the deploy host, so
    it survives the placeholder it arrived with. */
