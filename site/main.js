@@ -105,7 +105,7 @@ modelSelect.value = DEFAULT_MODEL
 const modelLabel = el('label', 'field-label', 'Model')
 modelLabel.htmlFor = modelSelect.id
 
-const transcribeButton = el('button', 'action', 'Transcribe')
+const transcribeButton = el('button', 'action is-primary', 'Transcribe')
 transcribeButton.type = 'button'
 transcribeButton.disabled = true
 
@@ -129,6 +129,13 @@ progress.hidden = true
 const controls = el('div', 'controls')
 controls.append(modelLabel, modelSelect, transcribeButton, srtButton, vttButton)
 
+// Empty until a transcript exists (`.transcript-hint:empty` hides it), so the
+// two gestures nothing else on the page states -- double-click a word,
+// drag ⋮ -- are said once rather than left for hover to reveal by accident.
+const transcriptHint = el('p', 'transcript-hint')
+const TRANSCRIPT_HINT_TEXT =
+  'Double-click a word to fix it · drag ⋮ between segments to move where one ends.'
+
 const transcriptEl = el('div', 'transcript')
 
 const footer = el(
@@ -148,6 +155,7 @@ app.append(
   surface,
   audio,
   controls,
+  transcriptHint,
   transcriptEl,
   progress,
   engineStatus,
@@ -201,6 +209,7 @@ function updateExportState() {
   engineStatus.textContent = transcript
     ? `${words} words in ${transcript.segments.length} segments.`
     : 'No transcript yet.'
+  transcriptHint.textContent = words > 0 ? TRANSCRIPT_HINT_TEXT : ''
 }
 
 // Ctrl/Cmd+Z to undo, Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y to redo. Attached to
@@ -237,6 +246,7 @@ async function open(file) {
   if (!file) return
 
   status.textContent = `Decoding ${file.name}…`
+  status.classList.remove('is-error')
   try {
     const decoded = await decodeAudioFile(file)
 
@@ -266,6 +276,7 @@ async function open(file) {
     transcribeButton.disabled = false
   } catch (error) {
     status.textContent = message(error)
+    status.classList.add('is-error')
   }
 }
 
@@ -304,6 +315,7 @@ async function transcribe() {
   modelSelect.disabled = true
   progress.hidden = false
   progress.removeAttribute('value')
+  engineStatus.classList.remove('is-error')
 
   try {
     if (loadedModel !== id) {
@@ -358,6 +370,7 @@ async function transcribe() {
     transcriptView.render(transcript)
   } catch (error) {
     engineStatus.textContent = message(error)
+    engineStatus.classList.add('is-error')
   } finally {
     progress.hidden = true
     transcribeButton.disabled = false
