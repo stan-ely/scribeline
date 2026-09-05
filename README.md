@@ -123,8 +123,8 @@ So the host decides which engine loads, and both builds ship. Where the headers
 arrive, the page loads `whisper-mt.js` and uses every core; where they do not,
 it loads `whisper.js` and runs on one. The dev server sends them, so `npm start`
 matches an isolated deploy — which means the single-threaded path is the one
-local development never exercises. Comment out the two `setHeader` calls in
-`scripts/build-site.mjs` to try it.
+local development never exercises. `SCRIBELINE_NO_ISOLATION=1 npm start`
+withholds the headers, so that path can be tried without editing anything.
 
 **Deploying somewhere that needs the engine built.** The engine is compiled, not
 committed, and `scripts/fetch-whisper.mjs` reaches for Docker when no `emcmake`

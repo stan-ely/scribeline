@@ -21,8 +21,12 @@
  * So the engine that loads is decided by the host, and both have to work. The
  * dev server below sends the headers, so `npm start` is isolated and runs the
  * threaded build. A host that ignores _headers gets the single-threaded one,
- * which is several times slower and is the path nothing exercises unless
- * somebody deliberately removes the two setHeader calls and tries it.
+ * which is several times slower and is the path nothing exercises by default:
+ *
+ *     SCRIBELINE_NO_ISOLATION=1 npm start
+ *
+ * withholds the two headers, which is how that path gets tested without editing
+ * this file.
  *
  * The CSP itself is unaffected by any of this: it is delivered in a <meta> tag
  * generated below, so it survives a host that sets no headers whatsoever.
@@ -304,6 +308,15 @@ export async function build() {
   return { entryFile, workerFile, cssFile, engineFiles, outputs }
 }
 
+/**
+ * Whether to serve without COOP/COEP, so the single-threaded engine loads.
+ *
+ * Set SCRIBELINE_NO_ISOLATION=1 to reproduce a host that ignores site/_headers.
+ * `npm start` is isolated by default because that is the faster path to work in;
+ * this is how the other one gets tested at all.
+ */
+const ISOLATION_DISABLED = process.env.SCRIBELINE_NO_ISOLATION === '1'
+
 /** @type {Record<string, string>} */
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -342,12 +355,19 @@ async function serveDist() {
 
       // The two headers that make SharedArrayBuffer -- and therefore threaded
       // inference -- available. They mirror site/_headers, which the deploy host
-      // may or may not read. See this file's header comment: the practical
-      // effect is that local development is cross-origin isolated and production
-      // currently is not, so anything conditional on `crossOriginIsolated` must
-      // be exercised with them removed before it is believed.
-      res.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
-      res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp')
+      // may or may not read.
+      //
+      // SCRIBELINE_NO_ISOLATION=1 withholds them, which is the only way to
+      // exercise the single-threaded engine and every other branch conditional
+      // on `crossOriginIsolated`. That path is a real deploy configuration --
+      // any host that ignores _headers, any browser without SharedArrayBuffer --
+      // and it is the one nothing exercises by default, so it gets a switch
+      // rather than an edit somebody has to remember to undo. An earlier round
+      // of this check was skipped precisely because it meant commenting out code.
+      if (!ISOLATION_DISABLED) {
+        res.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
+        res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp')
+      }
       res.setHeader('Content-Type', MIME[path.extname(filePath)] ?? 'application/octet-stream')
       createReadStream(filePath).pipe(res)
     } catch (error) {
@@ -358,7 +378,8 @@ async function serveDist() {
 
   await new Promise((resolve) => server.listen(PORT, () => resolve(undefined)))
   console.log(
-    `Serving site/dist/ at http://localhost:${PORT} (secure context: yes, via localhost; cross-origin isolated: yes)`,
+    `Serving site/dist/ at http://localhost:${PORT} (secure context: yes, via localhost; ` +
+      `cross-origin isolated: ${ISOLATION_DISABLED ? 'NO -- single-threaded engine' : 'yes'})`,
   )
 }
 

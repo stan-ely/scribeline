@@ -80,6 +80,9 @@ Two builds are produced and the host picks. The threaded one needs
 `SharedArrayBuffer` and therefore the two headers in `site/_headers`, which
 Netlify and Cloudflare Pages read and GitHub Pages ignores; anywhere the headers
 do not arrive, the single-threaded build loads instead and runs on one core.
+Both have been run end to end -- `SCRIBELINE_NO_ISOLATION=1 npm start` withholds
+the headers from the dev server, so the fallback is a command rather than an
+edit somebody has to remember to undo, which is why it went untested before.
 
 Making those two builds actually different took an edit nobody would guess at.
 whisper.cpp compiles every emscripten target with `-pthread` unconditionally, so

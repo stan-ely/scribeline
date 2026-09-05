@@ -68,8 +68,9 @@ without the headers — the single-threaded build loads instead.
 
 That fallback is a real code path, not a theoretical one, and it is the one
 nothing exercises by default. Anything conditional on `crossOriginIsolated` must
-be run with those two `setHeader` calls in the dev server commented out before
-it is believed. Do not write code that assumes `SharedArrayBuffer` exists.
+be run under `SCRIBELINE_NO_ISOLATION=1 npm start`, which withholds the two
+headers, before it is believed. Do not write code that assumes
+`SharedArrayBuffer` exists.
 
 The two builds are only genuinely different because
 `scripts/fetch-whisper.mjs` makes whisper.cpp's unconditional `-pthread`
