@@ -7,8 +7,19 @@
  * Browser-only. Checked under tsconfig.json alone.
  */
 
-import { wordAt, splitSegment, mergeSegments, moveBoundary, setWordText } from '../core/transcript.js'
+import {
+  wordAt,
+  splitSegment,
+  mergeSegments,
+  moveBoundary,
+  setWordText,
+  insertWord,
+  deleteWord,
+} from '../core/transcript.js'
 import { el } from './dom.js'
+
+/** Below this, a word is dimmed and underlined as worth a second look. */
+const LOW_CONFIDENCE_THRESHOLD = 0.5
 
 /** @typedef {import('../core/transcript.js').Transcript} Transcript */
 
@@ -43,7 +54,11 @@ export function createTranscriptView({ container, audio, onChange }) {
 
   // The in-flight word edit, if any. A second double-click, a blur, or an
   // Escape while one is open is unambiguous because there is only ever one.
-  /** @type {{ input: HTMLInputElement, segmentIndex: number, wordIndex: number } | null} */
+  // `isInsert` distinguishes editing an existing word (backed by a real Word,
+  // reverts to its old text on empty) from filling in a brand new one (backed
+  // by nothing yet, discards cleanly on empty since there is nothing to
+  // revert to).
+  /** @type {{ input: HTMLInputElement, segmentIndex: number, wordIndex: number, isInsert: boolean } | null} */
   let editing = null
 
   // The in-flight boundary drag, if any. lastDelta lets pointermove skip
@@ -111,7 +126,11 @@ export function createTranscriptView({ container, audio, onChange }) {
       const segmentIndex = Number(merge.dataset.segment)
       const next = mergeSegments(transcript, segmentIndex)
       if (next !== transcript) commit(next)
+      return
     }
+
+    const insert = target.closest('.transcript-insert')
+    if (insert instanceof HTMLElement) beginInsert(insert)
   }
 
   /** @param {MouseEvent} event */
@@ -143,31 +162,101 @@ export function createTranscriptView({ container, audio, onChange }) {
     input.focus()
     input.select()
 
-    editing = { input, segmentIndex, wordIndex }
+    editing = { input, segmentIndex, wordIndex, isInsert: false }
   }
 
-  const commitEdit = () => {
+  /** @param {HTMLElement} button */
+  const beginInsert = (button) => {
+    if (!transcript) return
+    if (editing) commitEdit()
+
+    const segmentIndex = Number(button.dataset.segment)
+    const wordIndex = Number(button.dataset.word)
+
+    const input = el('input', 'transcript-word-input')
+    input.type = 'text'
+    input.dataset.segment = String(segmentIndex)
+    input.dataset.word = String(wordIndex)
+
+    // No value, no select() -- there is no word yet to prefill or highlight.
+    button.replaceWith(input)
+    input.focus()
+
+    editing = { input, segmentIndex, wordIndex, isInsert: true }
+  }
+
+  /**
+   * The word immediately after (segmentIndex, wordIndex), or `null` if that
+   * was the transcript's last word. Rolls into the next segment's first word
+   * rather than stopping at a segment boundary, so Enter-to-advance reads as
+   * "next word in the transcript," not "next word in this segment."
+   *
+   * @param {Transcript} next
+   * @param {number} segmentIndex
+   * @param {number} wordIndex
+   * @returns {{ segmentIndex: number, wordIndex: number } | null}
+   */
+  function nextWordPosition(next, segmentIndex, wordIndex) {
+    const segment = next.segments[segmentIndex]
+    if (segment && wordIndex + 1 < segment.words.length) {
+      return { segmentIndex, wordIndex: wordIndex + 1 }
+    }
+    const nextSegment = next.segments[segmentIndex + 1]
+    if (nextSegment && nextSegment.words.length > 0) {
+      return { segmentIndex: segmentIndex + 1, wordIndex: 0 }
+    }
+    return null
+  }
+
+  /** @param {{ advance?: boolean }} [options] */
+  const commitEdit = ({ advance = false } = {}) => {
     if (!editing || !transcript) return
-    const { input, segmentIndex, wordIndex } = editing
+    const { input, segmentIndex, wordIndex, isInsert } = editing
     const text = input.value.trim()
     editing = null
 
-    // An empty word breaks the space-joined rendering and would export a
-    // subtitle cue timed to nothing -- reverting is the guard, not a new
-    // invariant added to setWordText.
     if (!text) {
+      // An empty EXISTING word breaks the space-joined rendering and would
+      // export a subtitle cue timed to nothing -- reverting is the guard, not
+      // a new invariant added to setWordText. An un-typed INSERT never
+      // existed in the transcript, so there is nothing to revert to either;
+      // both cases resolve the same way, a plain re-render.
       render(transcript)
       return
     }
 
-    const next = setWordText(transcript, segmentIndex, wordIndex, text)
+    const next = isInsert
+      ? insertWord(transcript, segmentIndex, wordIndex, text)
+      : setWordText(transcript, segmentIndex, wordIndex, text)
     commit(next)
+
+    if (advance) {
+      // After an insert, the new word now sits at wordIndex and whatever used
+      // to be there has shifted to wordIndex + 1 -- exactly the position a
+      // plain edit would advance to, so one lookup covers both cases.
+      const pos = nextWordPosition(next, segmentIndex, wordIndex)
+      const span = pos && words[pos.segmentIndex]?.[pos.wordIndex]
+      if (span) beginEdit(span)
+    }
   }
 
   const cancelEdit = () => {
     if (!editing || !transcript) return
     editing = null
     render(transcript)
+  }
+
+  const deleteEditingWord = () => {
+    if (!editing || !transcript) return
+    const { segmentIndex, wordIndex, isInsert } = editing
+    editing = null
+    // An insert that never became a real word has nothing in the transcript
+    // to delete -- the same case commitEdit's empty-text branch handles.
+    if (isInsert) {
+      render(transcript)
+      return
+    }
+    commit(deleteWord(transcript, segmentIndex, wordIndex))
   }
 
   /** @param {FocusEvent} event */
@@ -178,12 +267,15 @@ export function createTranscriptView({ container, audio, onChange }) {
   /** @param {KeyboardEvent} event */
   const onEditKeydown = (event) => {
     if (!editing || event.target !== editing.input) return
-    if (event.key === 'Enter') {
+    if (event.key === 'Enter' || event.key === 'Tab') {
       event.preventDefault()
-      commitEdit()
+      commitEdit({ advance: true })
     } else if (event.key === 'Escape') {
       event.preventDefault()
       cancelEdit()
+    } else if ((event.ctrlKey || event.metaKey) && event.key === 'Backspace') {
+      event.preventDefault()
+      deleteEditingWord()
     }
   }
 
@@ -295,9 +387,22 @@ export function createTranscriptView({ container, audio, onChange }) {
   container.addEventListener('pointermove', onPointerMove)
   container.addEventListener('pointerup', onPointerUp)
 
+  /** @param {number} segmentIndex @param {number} wordIndex */
+  function buildInsertButton(segmentIndex, wordIndex) {
+    // Valid at every gap, including before the first and after the last word
+    // -- unlike split, a segment's very edges can also grow a new word.
+    const button = el('button', 'transcript-insert')
+    button.type = 'button'
+    button.title = 'Insert a word here'
+    button.dataset.segment = String(segmentIndex)
+    button.dataset.word = String(wordIndex)
+    return button
+  }
+
   /** @param {Segment} segment @param {number} segmentIndex */
   function buildSegment(segment, segmentIndex) {
     const p = el('p', 'transcript-segment')
+    p.append(buildInsertButton(segmentIndex, 0))
     const spans = segment.words.map((word, wordIndex) => {
       if (wordIndex > 0) {
         // Never placed before the first or after the last word: splitting
@@ -315,7 +420,13 @@ export function createTranscriptView({ container, audio, onChange }) {
       span.dataset.start = String(word.start)
       span.dataset.segment = String(segmentIndex)
       span.dataset.word = String(wordIndex)
+      // Absent confidence means whisper did not report one -- rendered
+      // exactly like a confident word, never like a low one.
+      if (word.confidence !== undefined && word.confidence < LOW_CONFIDENCE_THRESHOLD) {
+        span.classList.add('is-low-confidence')
+      }
       p.append(span, document.createTextNode(' '))
+      p.append(buildInsertButton(segmentIndex, wordIndex + 1))
       return span
     })
     return { p, spans }

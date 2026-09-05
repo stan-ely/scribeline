@@ -109,6 +109,10 @@ const transcribeButton = el('button', 'action is-primary', 'Transcribe')
 transcribeButton.type = 'button'
 transcribeButton.disabled = true
 
+const cancelButton = el('button', 'action is-danger', 'Cancel')
+cancelButton.type = 'button'
+cancelButton.hidden = true
+
 const srtButton = el('button', 'action', 'Download SRT')
 srtButton.type = 'button'
 srtButton.disabled = true
@@ -127,26 +131,36 @@ progress.max = 100
 progress.hidden = true
 
 const controls = el('div', 'controls')
-controls.append(modelLabel, modelSelect, transcribeButton, srtButton, vttButton)
+controls.append(modelLabel, modelSelect, transcribeButton, cancelButton, srtButton, vttButton)
+
+// Whether the selected model is already on this machine, and whether this
+// host runs single- or multi-threaded -- both said once, next to the
+// controls they explain, rather than discovered after clicking Transcribe or
+// buried in a footer nobody scrolls to.
+const modelHint = el('p', 'model-hint')
+const speedHint = el(
+  'p',
+  'speed-hint',
+  // Only the non-default case is worth a sentence -- the isolated case is
+  // what everything else on the page already assumes.
+  THREADS_AVAILABLE
+    ? ''
+    : 'Running single-threaded on this host, so transcription will be ' +
+      'noticeably slower than on a cross-origin-isolated deploy.',
+)
+const controlHints = el('div', 'control-hints')
+controlHints.append(modelHint, speedHint)
 
 // Empty until a transcript exists (`.transcript-hint:empty` hides it), so the
-// two gestures nothing else on the page states -- double-click a word,
-// drag ⋮ -- are said once rather than left for hover to reveal by accident.
+// gestures nothing else on the page states -- double-click a word, tab
+// through corrections, insert or delete one, drag ⋮ -- are said once rather
+// than left for hover to reveal by accident.
 const transcriptHint = el('p', 'transcript-hint')
 const TRANSCRIPT_HINT_TEXT =
-  'Double-click a word to fix it · drag ⋮ between segments to move where one ends.'
+  'Double-click a word to fix it, Enter/Tab for the next · + inserts a word, ' +
+  'Ctrl/Cmd+Backspace deletes one · drag ⋮ between segments to move where one ends.'
 
 const transcriptEl = el('div', 'transcript')
-
-const footer = el(
-  'p',
-  'footer',
-  THREADS_AVAILABLE
-    ? 'Cross-origin isolated: threaded inference is available.'
-    : 'Not cross-origin isolated, so SharedArrayBuffer is unavailable and ' +
-      'transcription runs single-threaded. That is the deploy host, not ' +
-      'the build.',
-)
 
 app.append(
   heading,
@@ -154,12 +168,12 @@ app.append(
   status,
   surface,
   audio,
+  controlHints,
   controls,
   transcriptHint,
   transcriptEl,
   progress,
   engineStatus,
-  footer,
 )
 
 const waveform = createWaveform(canvas)
@@ -176,9 +190,15 @@ const transcriptView = createTranscriptView({
 
 // Substituted by the build, which bundles the worker first so that this name --
 // which carries a content hash -- exists to substitute. See types/build.d.ts.
-const engine = createEngineClient(new URL(__WHISPER_WORKER__, document.baseURI).href)
+const workerUrl = new URL(__WHISPER_WORKER__, document.baseURI).href
 
 // --- State -----------------------------------------------------------------
+
+// A `let`, not a `const`: cancelling mid-transcribe replaces it with a fresh
+// worker (see transcribe()'s catch/cancel handling below) rather than trying
+// to make an already-running whisper.cpp call give up the main thread it is
+// blocking.
+let engine = createEngineClient(workerUrl)
 
 /** The object URL of the file currently loaded, released when the next replaces it. @type {string | null} */
 let currentUrl = null
@@ -211,6 +231,33 @@ function updateExportState() {
     : 'No transcript yet.'
   transcriptHint.textContent = words > 0 ? TRANSCRIPT_HINT_TEXT : ''
 }
+
+/**
+ * Say, before someone commits to it, whether pressing Transcribe with the
+ * currently-selected model starts a real download or not -- the option
+ * label already states its size, but not whether that size has already been
+ * paid.
+ *
+ * Stamped with the model id it was asked about and re-checked against the
+ * select's current value before applying: `isModelCached` is async, and a
+ * fast second change while the first check is still in flight must not have
+ * its answer overwritten by the first one arriving late.
+ */
+async function refreshModelHint() {
+  const id = modelSelect.value
+  const model = MODELS[/** @type {keyof typeof MODELS} */ (id)]
+  if (!model) return
+
+  const cached = await isModelCached(model.url, { caches })
+  if (modelSelect.value !== id) return // superseded by a later selection
+
+  modelHint.textContent = cached
+    ? `${model.label} is already downloaded.`
+    : `${model.label} will download ${megabytes(model.bytes)}.`
+}
+
+modelSelect.addEventListener('change', () => void refreshModelHint())
+void refreshModelHint()
 
 // Ctrl/Cmd+Z to undo, Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y to redo. Attached to
 // window rather than the transcript container, because a merge or split
@@ -304,6 +351,27 @@ surface.addEventListener('drop', (event) => {
 
 transcribeButton.addEventListener('click', () => void transcribe())
 
+// The in-flight run's cancellation, if any -- created fresh by transcribe()
+// each time, since an AbortController can't be un-aborted for a second run.
+/** @type {AbortController | null} */
+let cancelling = null
+let cancelled = false
+
+cancelButton.addEventListener('click', () => {
+  cancelled = true
+  cancelling?.abort()
+  // There is no cooperative cancel in the worker protocol -- whisper.cpp
+  // blocks the worker's one thread for the length of a transcribe() call, so
+  // the only way to actually stop one already running is to end the worker
+  // and start over. Doing this unconditionally (even mid-download, when
+  // nothing has been loaded into this engine yet) is simpler than tracking
+  // which phase is active, and costs one extra Worker construction that
+  // does not itself load wasm or a model.
+  engine.destroy()
+  engine = createEngineClient(workerUrl)
+  loadedModel = null
+})
+
 async function transcribe() {
   if (!currentBuffer) return
 
@@ -311,8 +379,13 @@ async function transcribe() {
   const model = MODELS[/** @type {keyof typeof MODELS} */ (id)]
   if (!model) return
 
+  const controller = new AbortController()
+  cancelling = controller
+  cancelled = false
+
   transcribeButton.disabled = true
   modelSelect.disabled = true
+  cancelButton.hidden = false
   progress.hidden = false
   progress.removeAttribute('value')
   engineStatus.classList.remove('is-error')
@@ -330,6 +403,7 @@ async function transcribe() {
       const bytes = await downloadModel(model.url, {
         fetch: globalThis.fetch.bind(globalThis),
         caches,
+        signal: controller.signal,
         onProgress: ({ loaded, total, cached: fromCache }) => {
           if (fromCache) return
           engineStatus.textContent = total
@@ -369,12 +443,26 @@ async function transcribe() {
     updateExportState()
     transcriptView.render(transcript)
   } catch (error) {
-    engineStatus.textContent = message(error)
-    engineStatus.classList.add('is-error')
+    // Both the abort()ed fetch and the destroy()ed worker reject with their
+    // own, unrelated errors -- `cancelled` is the one flag set by exactly one
+    // cause, the Cancel button, so it is what distinguishes "asked for this"
+    // from "actually failed" regardless of which phase was interrupted.
+    if (cancelled) {
+      engineStatus.textContent = 'Cancelled.'
+    } else {
+      engineStatus.textContent = message(error)
+      engineStatus.classList.add('is-error')
+    }
   } finally {
+    cancelling = null
     progress.hidden = true
+    cancelButton.hidden = true
     transcribeButton.disabled = false
     modelSelect.disabled = false
+    // A cancelled download leaves nothing cached (downloadModel only stores
+    // it on success), so this correctly falls back to "will download" rather
+    // than assuming the run that just ended left the model behind.
+    void refreshModelHint()
   }
 }
 

@@ -241,6 +241,77 @@ export function setWordText(transcript, segmentIndex, wordIndex, text) {
 }
 
 /**
+ * Insert a new word into a segment, before `wordIndex` (or after the last
+ * word, when `wordIndex === segment.words.length`).
+ *
+ * `start` and `end` are both set to the boundary time between the word's new
+ * neighbours: the previous word's `end` where one exists, else the next
+ * word's `start`. A segment is never empty (the invariant this file rests
+ * on), so at least one neighbour always exists -- there is no third case for
+ * "no neighbour on either side" to handle. The zero-length interval this
+ * produces never satisfies `wordAt`'s half-open `[start, end)` test, so an
+ * inserted word does not highlight during playback until somebody times it.
+ * That is accepted, not routed around.
+ *
+ * A no-op (returns transcript unchanged) at an out-of-range `wordIndex`, or
+ * with empty text -- the same "caller is a pointer, not a program" contract
+ * as `splitSegment`.
+ *
+ * @param {Transcript} transcript
+ * @param {number} segmentIndex
+ * @param {number} wordIndex insert lands BEFORE this word
+ * @param {string} text
+ * @returns {Transcript}
+ */
+export function insertWord(transcript, segmentIndex, wordIndex, text) {
+  const segment = transcript.segments[segmentIndex]
+  if (!segment) return transcript
+  if (wordIndex < 0 || wordIndex > segment.words.length) return transcript
+  if (!text) return transcript
+
+  const before = segment.words[wordIndex - 1]
+  const after = segment.words[wordIndex]
+  const time = before ? before.end : /** @type {Word} */ (after).start
+
+  const words = [...segment.words]
+  words.splice(wordIndex, 0, { text, start: time, end: time })
+
+  const segments = [...transcript.segments]
+  segments[segmentIndex] = { ...segment, words }
+  return { ...transcript, segments }
+}
+
+/**
+ * Remove one word from a segment.
+ *
+ * If it is the segment's only word, the whole segment is removed instead of
+ * leaving an empty one behind -- an empty segment has no bounds to derive,
+ * which is the one state this file cannot represent, and "delete the last
+ * word" reads as "delete this segment" anyway. A no-op at an out-of-range
+ * index.
+ *
+ * @param {Transcript} transcript
+ * @param {number} segmentIndex
+ * @param {number} wordIndex
+ * @returns {Transcript}
+ */
+export function deleteWord(transcript, segmentIndex, wordIndex) {
+  const segment = transcript.segments[segmentIndex]
+  if (!segment || !segment.words[wordIndex]) return transcript
+
+  const segments = [...transcript.segments]
+  if (segment.words.length === 1) {
+    segments.splice(segmentIndex, 1)
+  } else {
+    segments[segmentIndex] = {
+      ...segment,
+      words: segment.words.filter((_, i) => i !== wordIndex),
+    }
+  }
+  return { ...transcript, segments }
+}
+
+/**
  * Find the word being spoken at `time`, or `null` if none is.
  *
  * `null` is a real answer here, not a failure: most of a recording's timeline

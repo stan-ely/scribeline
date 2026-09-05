@@ -125,6 +125,12 @@ export function createEngineClient(workerUrl) {
 
     destroy() {
       worker.terminate()
+      // Mirrors the 'error' handler above: terminate() fires no message and
+      // no error event, so without this every pending load()/transcribe()
+      // promise hangs forever rather than settling -- and the page's
+      // finally block, which re-enables the controls, never runs.
+      const error = new Error('The transcription worker was cancelled.')
+      for (const waiting of pending.values()) waiting.reject(error)
       pending.clear()
     },
   }

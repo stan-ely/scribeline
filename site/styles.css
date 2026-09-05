@@ -290,6 +290,55 @@ noscript p {
   background: transparent;
 }
 
+/* Low-confidence words: dimmed, and given a warning-coloured underline
+   instead of the neutral one every word gets at rest. Absent confidence
+   (whisper didn't report one) draws with neither -- an unknown is not a low
+   score. */
+.transcript-word.is-low-confidence {
+  opacity: 0.6;
+  border-bottom-color: color-mix(in srgb, var(--error) 55%, transparent);
+}
+
+/* The insert control: a slot before every word and after the last one --
+   unlike split, it is valid at a segment's very first and very last gap too,
+   since a new word can be added at either edge. Same rest-state idiom as
+   .transcript-split: invisible until found. */
+.transcript-insert {
+  display: inline-block;
+  position: relative;
+  width: 0.75rem;
+  height: 1em;
+  vertical-align: middle;
+  margin: 0 -0.375rem;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  cursor: text;
+  transition: background-color 140ms ease-out;
+}
+
+.transcript-insert::after {
+  content: '+';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 0.7em;
+  line-height: 1;
+  color: color-mix(in srgb, var(--muted) 45%, transparent);
+}
+
+.transcript-insert:hover,
+.transcript-insert:focus-visible {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.transcript-insert:hover::after,
+.transcript-insert:focus-visible::after {
+  color: var(--fg);
+}
+
 /* Between segments: the drag handle and the merge control share this row,
    the way controls sharing a boundary in a timeline editor usually do -- one
    strip of affordances rather than two competing for the same pixels. */
@@ -337,7 +386,8 @@ noscript p {
 
 .transcript-boundary-handle:focus-visible,
 .transcript-merge:focus-visible,
-.transcript-split:focus-visible {
+.transcript-split:focus-visible,
+.transcript-insert:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -394,6 +444,20 @@ noscript p {
   color: var(--bg);
 }
 
+/* Cancel: the same --error token .status.is-error already uses, so a
+   cancellable run and a failed one read as related states, not two
+   unrelated colours invented for this one button. */
+.action.is-danger {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.action.is-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+  border-color: var(--error);
+  color: var(--error);
+}
+
 /* Disabled controls are dimmed rather than hidden. Every one of them is
    disabled for a reason the status line states -- no file open, no transcript
    yet -- and a control that vanishes leaves that sentence answering a question
@@ -419,15 +483,26 @@ noscript p {
   margin-bottom: var(--sp-1);
 }
 
-/* The threading readout. Deliberately quiet -- it is here to be checked, not
-   read. It is also the only externally visible fact about the deploy host, so
-   it survives the placeholder it arrived with. */
-.footer {
-  margin-top: var(--sp-4);
-  padding-top: var(--sp-2);
-  border-top: 1px solid var(--line);
-  font-family: var(--mono);
+/* Two short lines that belong next to the controls they explain: whether the
+   selected model needs downloading, and whether this host runs single- or
+   multi-threaded. Grouped so both can be visible at once (a plausible first
+   visit: an uncached model on a non-isolated host) without each fighting the
+   controls row for its own line. */
+.control-hints {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin: 0 0 var(--sp-1);
+}
+
+.model-hint,
+.speed-hint {
+  margin: 0;
   font-size: 0.8125rem;
-  line-height: 1.6;
   color: var(--muted);
+}
+
+.model-hint:empty,
+.speed-hint:empty {
+  display: none;
 }

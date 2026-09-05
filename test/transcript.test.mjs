@@ -21,6 +21,8 @@ import {
   mergeSegments,
   moveBoundary,
   setWordText,
+  insertWord,
+  deleteWord,
   wordAt,
 } from '../src/core/transcript.js'
 
@@ -164,6 +166,77 @@ test('editing a word changes its text and leaves its timings alone', () => {
   assert.equal(t.segments[1].words[0].end, 2.6)
 })
 
+test('inserting a word in the middle takes the previous word\'s end as its timing', () => {
+  const t = insertWord(sample(), 0, 1, 'very')
+
+  assert.deepEqual(
+    t.segments[0].words.map((w) => w.text),
+    ['the', 'very', 'quick', 'fox'],
+  )
+  assert.equal(t.segments[0].words[1].start, 0.4, "the previous word's own end")
+  assert.equal(t.segments[0].words[1].end, 0.4, 'zero-length: nothing timed it')
+})
+
+test('inserting at the front of a segment takes the next word\'s start as its timing', () => {
+  const t = insertWord(sample(), 0, 0, 'well')
+
+  assert.deepEqual(
+    t.segments[0].words.map((w) => w.text),
+    ['well', 'the', 'quick', 'fox'],
+  )
+  assert.equal(t.segments[0].words[0].start, 0, "the next word's own start")
+  assert.equal(t.segments[0].words[0].end, 0)
+})
+
+test('inserting after the last word of a segment takes its end as its timing', () => {
+  const t = insertWord(sample(), 0, 3, 'indeed')
+
+  assert.deepEqual(
+    t.segments[0].words.map((w) => w.text),
+    ['the', 'quick', 'fox', 'indeed'],
+  )
+  assert.equal(t.segments[0].words[3].start, 1.5)
+  assert.equal(t.segments[0].words[3].end, 1.5)
+})
+
+test('inserting empty text, or at an out-of-range position, is a no-op', () => {
+  const t = sample()
+  assert.equal(insertWord(t, 0, 1, ''), t, 'nothing was typed')
+  assert.equal(insertWord(t, 0, -1, 'x'), t, 'before the start of the segment')
+  assert.equal(insertWord(t, 0, 4, 'x'), t, 'past the end of the segment')
+  assert.equal(insertWord(t, 9, 0, 'x'), t, 'a segment that does not exist')
+})
+
+test('deleting a word removes it and leaves the rest of the segment alone', () => {
+  const t = deleteWord(sample(), 0, 1)
+
+  assert.deepEqual(
+    t.segments[0].words.map((w) => w.text),
+    ['the', 'fox'],
+  )
+  assert.equal(t.segments.length, 2, 'the segment survives with its remaining words')
+})
+
+test('deleting a segment\'s only word removes the segment instead of emptying it', () => {
+  const t = deleteWord(splitSegment(sample(), 0, 1), 0, 0)
+
+  assert.deepEqual(
+    t.segments.map((s) => s.words.map((w) => w.text)),
+    [
+      ['quick', 'fox'],
+      ['jumped', 'over', 'it'],
+    ],
+    'the one-word segment is gone, not left empty',
+  )
+})
+
+test('deleting at an out-of-range position is a no-op', () => {
+  const t = sample()
+  assert.equal(deleteWord(t, 0, 3), t, 'past the last word')
+  assert.equal(deleteWord(t, 0, -1), t)
+  assert.equal(deleteWord(t, 9, 0), t, 'a segment that does not exist')
+})
+
 test('no operation mutates the transcript it was given', () => {
   // Undo is a stack of the objects these functions already returned. That only
   // works if the earlier ones are still what they were.
@@ -174,6 +247,8 @@ test('no operation mutates the transcript it was given', () => {
   mergeSegments(t, 0)
   moveBoundary(t, 0, -1)
   setWordText(t, 0, 0, 'THE')
+  insertWord(t, 0, 1, 'very')
+  deleteWord(t, 0, 1)
 
   assert.deepEqual(t, snapshot, 'the input was modified in place by one of the operations')
 })
