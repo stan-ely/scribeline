@@ -194,6 +194,88 @@ noscript p {
   color: var(--fg);
 }
 
+/* The word being corrected: an <input> swapped in for its <span> for the
+   life of a double-click edit. Sized and coloured to read as "this word
+   became editable," not as a form appearing in running text. */
+.transcript-word-input {
+  width: auto;
+  min-width: 2ch;
+  padding: 0 2px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--fg);
+  font: inherit;
+}
+
+/* The split control: a sliver between two words that only becomes a visible
+   seam on hover or focus, so the transcript does not read as perforated at
+   every word boundary while idle. */
+.transcript-split {
+  display: inline-block;
+  width: 0.5rem;
+  height: 1em;
+  vertical-align: middle;
+  margin: 0 -0.25rem;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  cursor: col-resize;
+}
+
+.transcript-split:hover,
+.transcript-split:focus-visible {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/* Between segments: the drag handle and the merge control share this row,
+   the way controls sharing a boundary in a timeline editor usually do -- one
+   strip of affordances rather than two competing for the same pixels. */
+.transcript-boundary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  height: 1.5rem;
+  color: var(--muted);
+}
+
+.transcript-boundary-handle,
+.transcript-merge {
+  padding: 0 var(--sp-1);
+  border: 1px dashed var(--line);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.transcript-boundary-handle {
+  cursor: row-resize;
+}
+
+.transcript-boundary-handle::before {
+  content: '⋮';
+}
+
+.transcript-boundary-handle:hover,
+.transcript-boundary-handle.is-dragging,
+.transcript-merge:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.transcript-boundary-handle:focus-visible,
+.transcript-merge:focus-visible,
+.transcript-split:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 /* The engine's controls: which model, transcribe, and the two exports.
    One row that wraps, rather than a grid -- there are five controls and the
    only relationship between them is left-to-right order. */

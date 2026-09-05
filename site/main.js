@@ -3,11 +3,9 @@
  * scripts/build-site.mjs.
  *
  * Audio in, subtitle file out. Open a recording, see it, play it, click it,
- * transcribe it, read it with the current word highlighted as it plays, and
- * download the SRT or VTT. Editing the transcript -- correcting a word,
- * splitting or merging segments, dragging a boundary -- is not wired up yet;
- * src/core/transcript.js already has the operations, this page just does not
- * call them.
+ * transcribe it, read it with the current word highlighted as it plays,
+ * correct a word, split or merge segments, drag a boundary, undo it if you
+ * change your mind, and download the SRT or VTT.
  */
 
 import { el, formatDuration } from '../src/web/dom.js'
@@ -20,6 +18,7 @@ import { createEngineClient } from '../src/web/engine-client.js'
 import { MODELS, DEFAULT_MODEL } from '../src/core/engine.js'
 import { downloadModel, isModelCached } from '../src/core/download.js'
 import { toSRT, toVTT } from '../src/core/subtitles.js'
+import { createUndoStack } from '../src/core/undo.js'
 
 /** @typedef {import('../src/core/transcript.js').Transcript} Transcript */
 
@@ -157,7 +156,15 @@ app.append(
 
 const waveform = createWaveform(canvas)
 const player = createPlayer({ audio, surface })
-const transcriptView = createTranscriptView({ container: transcriptEl, audio })
+const transcriptView = createTranscriptView({
+  container: transcriptEl,
+  audio,
+  onChange: (next) => {
+    transcript = next
+    history?.push(next)
+    updateExportState()
+  },
+})
 
 // Substituted by the build, which bundles the worker first so that this name --
 // which carries a content hash -- exists to substitute. See types/build.d.ts.
@@ -173,8 +180,55 @@ let currentBuffer = null
 let currentName = ''
 /** @type {Transcript | null} */
 let transcript = null
+/** Undo/redo over `transcript`, created once a transcript exists. @type {import('../src/core/undo.js').UndoStack<Transcript> | null} */
+let history = null
 /** Whether the loaded model matches the one the select is showing. @type {string | null} */
 let loadedModel = null
+
+/**
+ * Keep the export buttons and the word-count status in sync with whatever
+ * `transcript` currently holds -- whisper's own output, an edit, or an
+ * undo/redo. The single place both transcribe() and edits funnel through, so
+ * the two never drift the way two separately-maintained copies of this logic
+ * would.
+ */
+function updateExportState() {
+  const words = transcript
+    ? transcript.segments.reduce((n, segment) => n + segment.words.length, 0)
+    : 0
+  srtButton.disabled = words === 0
+  vttButton.disabled = words === 0
+  engineStatus.textContent = transcript
+    ? `${words} words in ${transcript.segments.length} segments.`
+    : 'No transcript yet.'
+}
+
+// Ctrl/Cmd+Z to undo, Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y to redo. Attached to
+// window rather than the transcript container, because a merge or split
+// click may have just had render() replace the element that had focus --
+// chasing focus through a container that rebuilds itself on every edit is
+// more fragile than filtering by activeElement instead.
+window.addEventListener('keydown', (event) => {
+  if (!history) return
+  const isUndo = (event.ctrlKey || event.metaKey) && !event.shiftKey && event.key === 'z'
+  const isRedo =
+    (event.ctrlKey || event.metaKey) &&
+    ((event.shiftKey && event.key === 'z') || event.key === 'y')
+  if (!isUndo && !isRedo) return
+
+  // A word correction is a native <input> mid-edit, with its own undo
+  // history -- Ctrl/Cmd+Z there should behave like it does in any text field,
+  // not jump the whole transcript back a step.
+  const active = document.activeElement
+  if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) return
+
+  event.preventDefault()
+  const next = isUndo ? history.undo() : history.redo()
+  if (next === undefined) return
+  transcript = next
+  updateExportState()
+  transcriptView.render(transcript)
+})
 
 // --- Opening a recording ---------------------------------------------------
 
@@ -204,9 +258,8 @@ async function open(file) {
     // file's name, which is a mistake they would not find until a player
     // disagreed with them.
     transcript = null
-    srtButton.disabled = true
-    vttButton.disabled = true
-    engineStatus.textContent = 'No transcript yet.'
+    history = null
+    updateExportState()
     transcriptView.clear()
 
     status.textContent = `${decoded.name} — ${formatDuration(decoded.duration)}`
@@ -300,10 +353,8 @@ async function transcribe() {
       },
     )
 
-    const words = transcript.segments.reduce((n, segment) => n + segment.words.length, 0)
-    engineStatus.textContent = `${words} words in ${transcript.segments.length} segments.`
-    srtButton.disabled = words === 0
-    vttButton.disabled = words === 0
+    history = createUndoStack(transcript)
+    updateExportState()
     transcriptView.render(transcript)
   } catch (error) {
     engineStatus.textContent = message(error)
