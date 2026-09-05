@@ -7,9 +7,11 @@
 # That is not cosmetic. Without those two headers the page is not cross-origin
 # isolated, `SharedArrayBuffer` is unavailable, and whisper.cpp runs
 # single-threaded -- several times slower than it does against `npm start`,
-# which does send them. site/main.js reads `crossOriginIsolated` once and is
-# expected to select a single-threaded build rather than fail, so the deploy
-# works; it is just slow in a way that local development will never reveal.
+# which does send them. site/main.js reads `crossOriginIsolated` once and picks
+# the single-threaded build rather than failing, so the deploy works; it is just
+# slow in a way that local development will never reveal. That is not an
+# assumption: `SCRIBELINE_NO_ISOLATION=1 npm start` reproduces this host exactly,
+# and transcription has been run end to end under it.
 #
 # The two real fixes are a host that reads _headers (Cloudflare Pages, Netlify)
 # or a service worker that injects the headers into its own responses. Both are
